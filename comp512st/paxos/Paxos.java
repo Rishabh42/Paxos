@@ -4,8 +4,8 @@ package comp512st.paxos;
 import comp512.gcl.*;	import java.io.*;
 import java.net.UnknownHostException;
 import java.util.logging.*;
-import java.lang.Object;
-
+import java.util.Dictionary;
+import java.util.Hashtable;
 import comp512.utils.*;	
 
 // Any other imports that you may need.	// Any other imports that you may need.
@@ -27,15 +27,16 @@ public class Paxos
 	FailCheck failCheck;
 
 	private double currentBallotID = 0.0;
-	private static const long THREAD_SLEEP_MILLIS = 200;
-	private static const String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
-	private static const String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
-	private static const String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
-	private static const String PAXOS_PHASE_PROMISE_DENY = "promisedeny";
-	private static const String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
+	private static final long THREAD_SLEEP_MILLIS = 200;
+	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
+	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
+	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
+	private static final String PAXOS_PHASE_PROMISE_DENY = "promisedeny";
+	private static final String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
 	
 	private int processCount;
 	private Dictionary<String, TriStateResponse> promises;
+	private String[] allProcesses;
 
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck) throws IOException, UnknownHostException
 	{
@@ -46,13 +47,14 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		processCount = allGroupProcesses.length;
+		allProcesses = allGroupProcesses;
 		resetPromises();
 	}
 
 	synchronized private void resetPromises()
 	{
-		promises = new Dictionary<String, TriStateResponse>();
-		foreach(String process : gcl.allGroupProcesses)
+		promises = new Hashtable<String, TriStateResponse>();
+		for (String process : allProcesses)
 		{
 			promises.put(process, TriStateResponse.NORESPONSE);
 		}
@@ -69,7 +71,11 @@ public class Paxos
 		while (!propose())
 		{
 			resetPromises();
-			Thread.sleep(THREAD_SLEEP_MILLIS);
+			try
+			{
+				Thread.sleep(THREAD_SLEEP_MILLIS);
+			}
+			catch (InterruptedException ie) {}
 		}
 		resetPromises();
 
@@ -87,7 +93,7 @@ public class Paxos
 
 		if (obj[0] == PAXOS_PHASE_PROPOSE_LEADER)
 		{
-			double proposerBallotID = obj[1];
+			double proposerBallotID = (double)obj[1];
 			if (proposerBallotID > currentBallotID)
 			{
 				currentBallotID = proposerBallotID;
@@ -104,26 +110,31 @@ public class Paxos
 		{
 			synchronized(promises)
 			{
-				if (promises.containsKey(gcmsg.senderProcess))
+				try
 				{
 					promises.remove(gcmsg.senderProcess);
 					promises.put(gcmsg.senderProcess, TriStateResponse.ACCEPT);
 				}
+				catch (Exception e)
+				{}
 			}
 		}
 		else if (obj[0] == PAXOS_PHASE_PROMISE_DENY)
 		{
 			synchronized(promises)
 			{
-				if (promises.containsKey(gcmsg.senderProcess))
+				try
 				{
 					promises.remove(gcmsg.senderProcess);
 					promises.put(gcmsg.senderProcess, TriStateResponse.DENY);
 				}
+				catch (Exception e){}
 			}
 		}
 		else if (obj[0] == PAXOS_PHASE_CONFIRM_VALUE)
 			return obj[1];
+
+		return gcmsg.val;
 	}
 
 	// Add any of your own shutdown code into this method.
@@ -132,7 +143,7 @@ public class Paxos
 		gcl.shutdownGCL();
 	}
 
-	private bool propose()
+	private boolean propose()
 	{
 		currentBallotID += 0.1;
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, currentBallotID };
@@ -141,7 +152,11 @@ public class Paxos
 		TriStateResponse response = hasMajority();
 		while (response == TriStateResponse.NORESPONSE)
 		{	
-			Thread.sleep(THREAD_SLEEP_MILLIS);
+			try
+			{
+				Thread.sleep(THREAD_SLEEP_MILLIS);
+			}
+			catch (InterruptedException ie) {}
 			response = hasMajority();
 		}
 		return response == TriStateResponse.ACCEPT;
@@ -152,7 +167,7 @@ public class Paxos
 		int acceptCount = 0;
 		int denyCount = 0;
 		
-		foreach (String process : gcl.allGroupProcesses)
+		for (String process : allProcesses)
 		{
 			if (promises.get(process) == TriStateResponse.NORESPONSE)
 			{
