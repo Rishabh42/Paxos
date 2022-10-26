@@ -1,10 +1,17 @@
 package comp512st.paxos;
 
 // Access to the GCL layer
-import java.io.*;
+import comp512.gcl.*;	import java.io.*;
 import java.net.UnknownHostException;
 import java.util.logging.*;
+import java.lang.Object;
 
+import comp512.utils.*;	
+
+// Any other imports that you may need.	// Any other imports that you may need.
+import java.io.*;	
+import java.util.logging.*;	
+import java.net.UnknownHostException;
 
 // Any other imports that you may need.
 
@@ -23,10 +30,12 @@ public class Paxos
 	private static const long THREAD_SLEEP_MILLIS = 200;
 	private static const String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static const String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
+	private static const String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
+	private static const String PAXOS_PHASE_PROMISE_DENY = "promisedeny";
 	private static const String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
 	
 	private int processCount;
-	private TriStateResponse[] promises;
+	private Dictionary<String, TriStateResponse> promises;
 
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck) throws IOException, UnknownHostException
 	{
@@ -37,10 +46,15 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		processCount = allGroupProcesses.length;
-		promises = new TriStateResponse[processCount];
-		for (int i = 0; i < processCount; i++)
+		resetPromises();
+	}
+
+	synchronized private void resetPromises()
+	{
+		promises = new Dictionary<String, TriStateResponse>();
+		foreach(String process : gcl.allGroupProcesses)
 		{
-			promises[i] = TriStateResponse.NORESPONSE;
+			promises.put(process, TriStateResponse.NORESPONSE);
 		}
 	}
 
@@ -53,7 +67,11 @@ public class Paxos
 
 		//First step: Propose to be the leader
 		while (!propose())
+		{
+			resetPromises();
 			Thread.sleep(THREAD_SLEEP_MILLIS);
+		}
+		resetPromises();
 
 		Object[] returnObj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, val };
 		gcl.broadcastMsg(returnObj);
@@ -67,16 +85,45 @@ public class Paxos
 		
 		Object[] obj = (Object[])gcmsg.val;
 
-		if (obj[0] == PAXOS_PHASE_CONFIRM_VALUE)
-			return obj[1];
-		else if (obj[0] == PAXOS_PHASE_PROPOSE_LEADER)
+		if (obj[0] == PAXOS_PHASE_PROPOSE_LEADER)
 		{
 			double proposerBallotID = obj[1];
 			if (proposerBallotID > currentBallotID)
 			{
-				currentBallotID
+				currentBallotID = proposerBallotID;
+				Object[] acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, currentBallotID };
+				gcl.sendMsg(acceptMsg, gcmsg.senderProcess);
+			}
+			else
+			{
+				Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, currentBallotID };
+				gcl.sendMsg(denyMsg, gcmsg.senderProcess);
 			}
 		}
+		else if (obj[0] == PAXOS_PHASE_PROMISE_ACCEPT)
+		{
+			synchronized(promises)
+			{
+				if (promises.containsKey(gcmsg.senderProcess))
+				{
+					promises.remove(gcmsg.senderProcess);
+					promises.put(gcmsg.senderProcess, TriStateResponse.ACCEPT);
+				}
+			}
+		}
+		else if (obj[0] == PAXOS_PHASE_PROMISE_DENY)
+		{
+			synchronized(promises)
+			{
+				if (promises.containsKey(gcmsg.senderProcess))
+				{
+					promises.remove(gcmsg.senderProcess);
+					promises.put(gcmsg.senderProcess, TriStateResponse.DENY);
+				}
+			}
+		}
+		else if (obj[0] == PAXOS_PHASE_CONFIRM_VALUE)
+			return obj[1];
 	}
 
 	// Add any of your own shutdown code into this method.
@@ -85,7 +132,6 @@ public class Paxos
 		gcl.shutdownGCL();
 	}
 
-	
 	private bool propose()
 	{
 		currentBallotID += 0.1;
@@ -106,19 +152,19 @@ public class Paxos
 		int acceptCount = 0;
 		int denyCount = 0;
 		
-		for (int i = 0; i < processCount; i++)
+		foreach (String process : gcl.allGroupProcesses)
 		{
-			if (promises[i] == TriStateResponse.NORESPONSE)
+			if (promises.get(process) == TriStateResponse.NORESPONSE)
 			{
 				continue;
 			}
-			else if (promises[i] == TriStateResponse.ACCEPT)
+			else if (promises.get(process) == TriStateResponse.ACCEPT)
 			{
 				acceptCount ++;
 				if (((double)acceptCount / (double)processCount) > 0.5)
 					return TriStateResponse.ACCEPT;
 			}
-			else if (promises[i] == TriStateResponse.DENY)
+			else if (promises.get(process) == TriStateResponse.DENY)
 			{
 				denyCount ++;
 				if (((double)denyCount / (double)processCount) > 0.5)
