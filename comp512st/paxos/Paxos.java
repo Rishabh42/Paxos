@@ -53,9 +53,10 @@ public class Paxos
 	private Object acceptedValue;
 	private double lastAcceptedBallotID;
 	private Object lastAcceptedValue;
+
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck) throws IOException, UnknownHostException
 	{
-		// Rember to call the failCheck.checkFailure(..) with appropriate arguments throughout your Paxos code to force fail points if necessary.
+		// Remember to call the failCheck.checkFailure(..) with appropriate arguments throughout your Paxos code to force fail points if necessary.
 		this.failCheck = failCheck;
 
 		// Initialize the GCL communication system as well as anything else you need to.
@@ -129,6 +130,9 @@ public class Paxos
 
 	synchronized private void handleProposalFromLeaderMessage(String senderProcess, int proposerPlayerID, Object proposalID)
 	{
+		// invoking failcheck immediately when a process receives a propose message
+		failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE);
+
 		double proposerBallotID = (double)proposalID;
 		if (proposerBallotID > currentHighestBallotID)
 		{
@@ -268,6 +272,8 @@ public class Paxos
 		logger.info("Player: " + processID + " proposing to be a leader with ballotID: " + currentProposerBallotID);
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
 		gcl.broadcastMsg(obj);
+		// invoking failcheck after a process sends out its proposal to become a leader
+		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 
 		TriStateResponse response = hasMajority();
 		while (response == TriStateResponse.NORESPONSE)
