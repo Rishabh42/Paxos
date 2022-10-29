@@ -10,6 +10,8 @@ import comp512.utils.*;
 import java.util.LinkedList;
 import java.util.Queue;
 
+import java.util.logging.*;
+
 // Any other imports that you may need.	// Any other imports that you may need.
 import java.io.*;	
 import java.util.logging.*;	
@@ -27,6 +29,7 @@ public class Paxos
 {
 	GCL gcl;
 	FailCheck failCheck;
+	private Logger logger;
 
 	private double currentProposerBallotID = 0.0;
 	private double currentHighestBallotID = 0.0;
@@ -40,6 +43,8 @@ public class Paxos
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
 	
+	private String myProcess;
+
 	private int processCount;
 	private Dictionary<String, TriStateResponse> promises;
 	private String[] allProcesses;
@@ -55,6 +60,9 @@ public class Paxos
 
 		// Initialize the GCL communication system as well as anything else you need to.
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
+
+		this.myProcess = myProcess;
+		this.logger = logger;
 
 		processCount = allGroupProcesses.length;
 		allProcesses = allGroupProcesses;
@@ -80,11 +88,14 @@ public class Paxos
 	// This is what the application layer is going to call to send a message/value, such as the player and the move
 	public void broadcastTOMsg(Object val)
 	{
+		Object[] obj = (Object[])val;
+		logger.info("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
 		boolean mustRestartPaxosProcess = true;
 		while(mustRestartPaxosProcess)
 		{
+			logger.info("Player: " + obj[0] + " entering first phase of paxos");
 			//First step: Propose to be the leader
-			while (!proposeToBeLeader())
+			while (!proposeToBeLeader((int)obj[0]))
 			{
 				resetPromises();
 				try
@@ -95,6 +106,8 @@ public class Paxos
 			}
 			resetPromises();
 
+			
+			logger.info("Player: " + obj[0] + " entering second phase of paxos");
 			//Second step: Propose a value
 			TriStateResponse response = proposeValue(val);
 			if(response == TriStateResponse.ACCEPT)
@@ -103,16 +116,18 @@ public class Paxos
 			}
 			else
 			{
-				
 			currentProposerBallotID = currentHighestBallotID;
 			}
+			resetPromises();
 		}
 
+		
+		logger.info("Player: " + obj[0] + " entering third phase of paxos");
 		//Third step confirm value
 		confirmValue(val);
 	}
 
-	synchronized private void handleProposalFromLeaderMessage(String senderProcess, Object proposalID)
+	synchronized private void handleProposalFromLeaderMessage(String senderProcess, int proposerPlayerID, Object proposalID)
 	{
 		double proposerBallotID = (double)proposalID;
 		if (proposerBallotID > currentHighestBallotID)
@@ -120,11 +135,13 @@ public class Paxos
 			Object[] acceptMsg;
 			if (acceptedValue == null)
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, proposerBallotID };
+				logger.info("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID);
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, myProcess, proposerBallotID };
 			}
 			else 
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, currentHighestBallotID,  acceptedValue };
+				logger.info("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". However, previous value was accepted: " + acceptedValue);
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, myProcess, currentHighestBallotID,  acceptedValue };
 			}
 
 			currentHighestBallotID = proposerBallotID;
@@ -132,7 +149,8 @@ public class Paxos
 		}
 		else
 		{
-			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, currentHighestBallotID };
+			logger.info("Denying player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". current highest ballotID: " + currentHighestBallotID);
+			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
 			gcl.sendMsg(denyMsg, senderProcess);
 		}
 	}
@@ -243,10 +261,12 @@ public class Paxos
 		gcl.shutdownGCL();
 	}
 
-	private boolean proposeToBeLeader()
+	private boolean proposeToBeLeader(int processID)
 	{
 		currentProposerBallotID += 0.1;
-		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, currentProposerBallotID };
+		
+		logger.info("Player: " + processID + " proposing to be a leader with ballotID: " + currentProposerBallotID);
+		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
 		gcl.broadcastMsg(obj);
 
 		TriStateResponse response = hasMajority();
@@ -341,47 +361,54 @@ public class Paxos
 	{
 		public void run()
 		{
-			try
+			while (true)
 			{
-				GCMessage gcmsg = gcl.readGCMessage();
-				Object[] obj = (Object[])gcmsg.val;
+				try
+				{
+					GCMessage gcmsg = gcl.readGCMessage();
+					Object[] obj = (Object[])gcmsg.val;
 
-				if (obj[0].equals(PAXOS_PHASE_PROPOSE_LEADER))
-				{
-					handleProposalFromLeaderMessage(gcmsg.senderProcess, obj[1]);
+					if (obj[0].equals(PAXOS_PHASE_PROPOSE_LEADER))
+					{
+						logger.info("Received propose to be leader message from player: " + obj[1]);
+						handleProposalFromLeaderMessage(gcmsg.senderProcess, (int)obj[1], obj[2]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT))
+					{
+						logger.info("Received promise accept message from player: " + obj[1]);
+						handlePromiseAcceptMessage(gcmsg.senderProcess);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE))
+					{
+						logger.info("Received promise accept with previous value message from player: " + obj[1]);
+						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[2], obj[3]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROMISE_DENY))
+					{
+						logger.info("Received promise deny message from player: " + obj[1]);
+						handlePromiseDenyMessage(gcmsg.senderProcess, obj[2]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE))
+					{
+						handleProposeValueFromLeaderMessage(gcmsg.senderProcess, obj[1], obj[2]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK))
+					{
+						handleProposeValueAcceptAckMessage(gcmsg.senderProcess);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_DENYACK))
+					{
+						handleProposeValueDenyAckMessage(gcmsg.senderProcess, obj[1]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
+					{
+						handleConfirmValue(obj[1]);
+					}
 				}
-				else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT))
-				{
-					handlePromiseAcceptMessage(gcmsg.senderProcess);
+				catch (InterruptedException ie) 
+				{ 
+					
 				}
-				else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE))
-				{
-					handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[1], obj[2]);
-				}
-				else if (obj[0].equals(PAXOS_PHASE_PROMISE_DENY))
-				{
-					handlePromiseDenyMessage(gcmsg.senderProcess, obj[1]);
-				}
-				else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE))
-				{
-					handleProposeValueFromLeaderMessage(gcmsg.senderProcess, obj[1], obj[2]);
-				}
-				else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK))
-				{
-					handleProposeValueAcceptAckMessage(gcmsg.senderProcess);
-				}
-				else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_DENYACK))
-				{
-					handleProposeValueDenyAckMessage(gcmsg.senderProcess, obj[1]);
-				}
-				else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
-				{
-					handleConfirmValue(obj[1]);
-				}
-			}
-			catch (InterruptedException ie) 
-			{ 
-				
 			}
 		}
 	}
