@@ -107,11 +107,12 @@ public class Paxos
 			TriStateResponse response = proposeValue(val);
 			if(response == TriStateResponse.ACCEPT)
 			{
+				failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
 				mustRestartPaxosProcess = false;
 			}
 			else
 			{
-			currentProposerBallotID = currentHighestBallotID;
+				currentProposerBallotID = currentHighestBallotID;
 			}
 			resetPromises();
 		}
@@ -123,6 +124,8 @@ public class Paxos
 
 	synchronized private void handleProposalFromLeaderMessage(String senderProcess, int proposerPlayerID, Object proposalID)
 	{
+		failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE);
+
 		double proposerBallotID = (double)proposalID;
 		if (proposerBallotID > currentHighestBallotID)
 		{
@@ -144,6 +147,7 @@ public class Paxos
 			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
 			gcl.sendMsg(denyMsg, senderProcess);
 		}
+		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 	}
 
 	synchronized private void handlePromiseAcceptMessage(String senderProcess)
@@ -259,6 +263,8 @@ public class Paxos
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
 		gcl.broadcastMsg(obj);
 
+		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
+
 		TriStateResponse response = hasMajority();
 		while (response == TriStateResponse.NORESPONSE)
 		{	
@@ -276,6 +282,7 @@ public class Paxos
 		}
 		else
 		{
+			failCheck.checkFailure(FailCheck.FailureType.AFTERBECOMINGLEADER);
 			return true;
 		}
 	}
