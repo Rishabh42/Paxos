@@ -30,9 +30,10 @@ public class Paxos
 	GCL gcl;
 	FailCheck failCheck;
 
-	private double currentProposerBallotID = 0.0;
-	private double currentHighestBallotID = 0.0;
-	private static final long THREAD_SLEEP_MILLIS = 200;
+	/*
+	* Static helper variables
+	*/
+	private static final long THREAD_SLEEP_MAX_MILLIS = 15;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -42,16 +43,29 @@ public class Paxos
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
 	
+	/*
+	* Helper variables meant for both proposers and acceptors.
+	*/
 	private String myProcess;
-
-	private int processCount;
-	private Dictionary<String, TriStateResponse> promises;
 	private String[] allProcesses;
-	private Queue<Object> messagesQueue;
 	private Thread paxosThread;
-	private Object acceptedValue;
+	private double currentHighestBallotID = 0.0;
+	private Queue<Object> messagesQueue;
+
+	/*
+	* Private variables meant for the proposers/leaders
+	*/
+	private double currentProposerBallotID = 0.0;
 	private double lastAcceptedBallotID;
 	private Object lastAcceptedValue;
+	private int processCount;
+	private Dictionary<String, TriStateResponse> promises;
+
+	/*
+	* Private variables meant for the acceptors
+	*/
+	private Object acceptedValue;
+
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck) throws IOException, UnknownHostException
 	{
 		// Rember to call the failCheck.checkFailure(..) with appropriate arguments throughout your Paxos code to force fail points if necessary.
@@ -66,6 +80,7 @@ public class Paxos
 		allProcesses = allGroupProcesses;
 		messagesQueue = new LinkedList<Object>();
 		acceptedValue = null;
+		lastAcceptedBallotID = -1.0;
 		lastAcceptedValue = 0;
 
 		resetPromises();
@@ -90,36 +105,49 @@ public class Paxos
 		boolean mustRestartPaxosProcess = true;
 		while(mustRestartPaxosProcess)
 		{
-			//First step: Propose to be the leader
-			while (!proposeToBeLeader((int)obj[0]))
+			boolean mustRestartProposePhases = true;
+			while(mustRestartProposePhases)
 			{
-				resetPromises();
-				try
+				//First step: Propose to be the leader
+				while (!proposeToBeLeader((int)obj[0]))
 				{
-					Thread.sleep(THREAD_SLEEP_MILLIS);
+					resetPromises();
+					try
+					{
+						Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
+					}
+					catch (InterruptedException ie) {}
 				}
-				catch (InterruptedException ie) {}
-			}
-			resetPromises();
+				resetPromises();
 
+				//Second step: Propose a value
+				TriStateResponse response = proposeValue(val);
+				if(response == TriStateResponse.ACCEPT)
+				{
+					failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
+					mustRestartProposePhases = false;
+				}
+				else
+				{
+					currentProposerBallotID = currentHighestBallotID;
+				}
+				resetPromises();
+			}
 			
-			//Second step: Propose a value
-			TriStateResponse response = proposeValue(val);
-			if(response == TriStateResponse.ACCEPT)
+			if (lastAcceptedValue != null)
 			{
-				failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
-				mustRestartPaxosProcess = false;
+				lastAcceptedValue = null;
+				lastAcceptedBallotID = -1.0;
 			}
 			else
 			{
-				currentProposerBallotID = currentHighestBallotID;
+				mustRestartPaxosProcess = false;
 			}
-			resetPromises();
-		}
 
+			//Third step confirm value
+			confirmValue(val);
+		}
 		
-		//Third step confirm value
-		confirmValue(val);
 	}
 
 	synchronized private void handleProposalFromLeaderMessage(String senderProcess, int proposerPlayerID, Object proposalID)
@@ -166,7 +194,7 @@ public class Paxos
 
 	synchronized private void handlePromiseAcceptWithPreviousValue(String senderProcess, Object previousValueBallotID, Object previousValue)
 	{
-		if (lastAcceptedBallotID < (double)previousValueBallotID || lastAcceptedValue == null)
+		if ((lastAcceptedBallotID >= 0 && lastAcceptedBallotID < (double)previousValueBallotID) || lastAcceptedValue == null)
 		{
 			lastAcceptedBallotID = (double)previousValueBallotID;
 			lastAcceptedValue = previousValue;
@@ -195,6 +223,7 @@ public class Paxos
 	synchronized private void handleConfirmValue(Object message)
 	{
 		messagesQueue.add(message);
+		acceptedValue = null;
 	}
 
 	synchronized private void handleProposeValueFromLeaderMessage(String senderProcess, Object ballotID, Object value)
@@ -242,7 +271,7 @@ public class Paxos
 		{
 			try 
 			{
-				Thread.sleep(THREAD_SLEEP_MILLIS);
+				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 				message = messagesQueue.peek();
 			}
 			catch (Exception e) {}
@@ -253,6 +282,11 @@ public class Paxos
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
+		try
+		{
+			paxosThread.join(1000);
+		}
+		catch (InterruptedException e) {}
 		gcl.shutdownGCL();
 	}
 
@@ -270,7 +304,7 @@ public class Paxos
 		{	
 			try
 			{
-				Thread.sleep(THREAD_SLEEP_MILLIS);
+				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 			}
 			catch (InterruptedException ie) {}
 			response = hasMajority();
@@ -307,7 +341,7 @@ public class Paxos
 		{	
 			try
 			{
-				Thread.sleep(THREAD_SLEEP_MILLIS);
+				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 			}
 			catch (InterruptedException ie) {}
 			response = hasMajority();
