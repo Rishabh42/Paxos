@@ -29,7 +29,6 @@ public class Paxos
 {
 	GCL gcl;
 	FailCheck failCheck;
-	private Logger logger;
 
 	private double currentProposerBallotID = 0.0;
 	private double currentHighestBallotID = 0.0;
@@ -62,7 +61,6 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		this.myProcess = myProcess;
-		this.logger = logger;
 
 		processCount = allGroupProcesses.length;
 		allProcesses = allGroupProcesses;
@@ -89,11 +87,9 @@ public class Paxos
 	public void broadcastTOMsg(Object val)
 	{
 		Object[] obj = (Object[])val;
-		logger.info("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
 		boolean mustRestartPaxosProcess = true;
 		while(mustRestartPaxosProcess)
 		{
-			logger.info("Player: " + obj[0] + " entering first phase of paxos");
 			//First step: Propose to be the leader
 			while (!proposeToBeLeader((int)obj[0]))
 			{
@@ -107,7 +103,6 @@ public class Paxos
 			resetPromises();
 
 			
-			logger.info("Player: " + obj[0] + " entering second phase of paxos");
 			//Second step: Propose a value
 			TriStateResponse response = proposeValue(val);
 			if(response == TriStateResponse.ACCEPT)
@@ -122,7 +117,6 @@ public class Paxos
 		}
 
 		
-		logger.info("Player: " + obj[0] + " entering third phase of paxos");
 		//Third step confirm value
 		confirmValue(val);
 	}
@@ -135,12 +129,10 @@ public class Paxos
 			Object[] acceptMsg;
 			if (acceptedValue == null)
 			{
-				logger.info("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID);
 				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, myProcess, proposerBallotID };
 			}
 			else 
 			{
-				logger.info("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". However, previous value was accepted: " + acceptedValue);
 				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, myProcess, currentHighestBallotID,  acceptedValue };
 			}
 
@@ -149,7 +141,6 @@ public class Paxos
 		}
 		else
 		{
-			logger.info("Denying player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". current highest ballotID: " + currentHighestBallotID);
 			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
 			gcl.sendMsg(denyMsg, senderProcess);
 		}
@@ -265,7 +256,6 @@ public class Paxos
 	{
 		currentProposerBallotID += 0.1;
 		
-		logger.info("Player: " + processID + " proposing to be a leader with ballotID: " + currentProposerBallotID);
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
 		gcl.broadcastMsg(obj);
 
@@ -370,22 +360,18 @@ public class Paxos
 
 					if (obj[0].equals(PAXOS_PHASE_PROPOSE_LEADER))
 					{
-						logger.info("Received propose to be leader message from player: " + obj[1]);
 						handleProposalFromLeaderMessage(gcmsg.senderProcess, (int)obj[1], obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT))
 					{
-						logger.info("Received promise accept message from player: " + obj[1]);
 						handlePromiseAcceptMessage(gcmsg.senderProcess);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE))
 					{
-						logger.info("Received promise accept with previous value message from player: " + obj[1]);
 						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[2], obj[3]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_DENY))
 					{
-						logger.info("Received promise deny message from player: " + obj[1]);
 						handlePromiseDenyMessage(gcmsg.senderProcess, obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE))
