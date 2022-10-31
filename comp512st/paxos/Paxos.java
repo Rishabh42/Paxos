@@ -8,7 +8,9 @@ import java.util.Dictionary;
 import java.util.Hashtable;
 import comp512.utils.*;	
 import java.util.LinkedList;
+import java.util.*;
 import java.util.Queue;
+import java.util.concurrent.*;
 
 import java.util.logging.*;
 
@@ -29,7 +31,6 @@ public class Paxos
 {
 	GCL gcl;
 	FailCheck failCheck;
-
 	/*
 	* Static helper variables
 	*/
@@ -43,6 +44,8 @@ public class Paxos
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
 	
+	private boolean shouldContinue = true;
+
 	/*
 	* Helper variables meant for both proposers and acceptors.
 	*/
@@ -50,7 +53,7 @@ public class Paxos
 	private String[] allProcesses;
 	private Thread paxosThread;
 	private double currentHighestBallotID = 0.0;
-	private Queue<Object> messagesQueue;
+	private TreeMap<Double, Object> messagesTreeMap;
 
 	/*
 	* Private variables meant for the proposers/leaders
@@ -75,13 +78,12 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		this.myProcess = myProcess;
-
 		processCount = allGroupProcesses.length;
 		allProcesses = allGroupProcesses;
-		messagesQueue = new LinkedList<Object>();
+		messagesTreeMap = new TreeMap<Double, Object>();
 		acceptedValue = null;
 		lastAcceptedBallotID = -1.0;
-		lastAcceptedValue = 0;
+		lastAcceptedValue = null;
 
 		resetPromises();
 
@@ -134,18 +136,21 @@ public class Paxos
 				resetPromises();
 			}
 			
+			
+			//Third step confirm value
 			if (lastAcceptedValue != null)
 			{
+				confirmValue(currentProposerBallotID, lastAcceptedValue);
 				lastAcceptedValue = null;
 				lastAcceptedBallotID = -1.0;
 			}
 			else
 			{
+				confirmValue(currentProposerBallotID, val);
 				mustRestartPaxosProcess = false;
 			}
-
-			//Third step confirm value
-			confirmValue(val);
+			
+			
 		}
 		
 	}
@@ -160,11 +165,11 @@ public class Paxos
 			Object[] acceptMsg;
 			if (acceptedValue == null)
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, myProcess, proposerBallotID };
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, proposerBallotID };
 			}
 			else 
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, myProcess, currentHighestBallotID,  acceptedValue };
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, currentHighestBallotID,  acceptedValue };
 			}
 
 			currentHighestBallotID = proposerBallotID;
@@ -175,6 +180,7 @@ public class Paxos
 			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
 			gcl.sendMsg(denyMsg, senderProcess);
 		}
+
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 	}
 
@@ -220,9 +226,9 @@ public class Paxos
 		catch (Exception e){}
 	}
 
-	synchronized private void handleConfirmValue(Object message)
+	synchronized private void handleConfirmValue(double ballotID, Object message)
 	{
-		messagesQueue.add(message);
+		messagesTreeMap.put(new Double(ballotID), message);
 		acceptedValue = null;
 	}
 
@@ -266,22 +272,36 @@ public class Paxos
 	// Messages delivered in ALL the processes in the group should deliver this in the same order.
 	public Object acceptTOMsg() throws InterruptedException
 	{
-		Object message = messagesQueue.peek();
-		while (message == null)
+		Map.Entry message = messagesTreeMap.pollFirstEntry();
+		Object returnObj = null;
+		if (!shouldContinue)
+		{
+			if (message != null)
+				returnObj = message.getValue();
+
+			return returnObj;
+		}
+		while (message == null && shouldContinue)
 		{
 			try 
 			{
 				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
-				message = messagesQueue.peek();
+				message = messagesTreeMap.pollFirstEntry();
 			}
 			catch (Exception e) {}
 		}
-		return messagesQueue.remove();
+			
+		if (message != null)
+		{
+			returnObj = message.getValue();
+		}
+		return returnObj;
 	}
 
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
+		shouldContinue = false;
 		try
 		{
 			paxosThread.join(1000);
@@ -327,7 +347,6 @@ public class Paxos
 		if (lastAcceptedValue != null)
 		{
 			obj = new Object[] { PAXOS_PHASE_PROPOSE_VALUE, currentProposerBallotID, lastAcceptedValue };
-			//TODO: The proposed value must still be pushed.
 		}
 		else
 		{
@@ -350,9 +369,9 @@ public class Paxos
 		return response;
 	}
 
-	private void confirmValue(Object val)
+	private void confirmValue(double ballotID, Object val)
 	{
-		Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, val };
+		Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, ballotID, val };
 		gcl.broadcastMsg(obj);
 	}
 
@@ -392,7 +411,7 @@ public class Paxos
 	{
 		public void run()
 		{
-			while (true)
+			while (shouldContinue)
 			{
 				try
 				{
@@ -409,7 +428,7 @@ public class Paxos
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE))
 					{
-						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[2], obj[3]);
+						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[1], obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_DENY))
 					{
@@ -429,7 +448,7 @@ public class Paxos
 					}
 					else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
 					{
-						handleConfirmValue(obj[1]);
+						handleConfirmValue((double)obj[1], obj[2]);
 					}
 				}
 				catch (InterruptedException ie) 

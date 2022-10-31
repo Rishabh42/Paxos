@@ -71,6 +71,20 @@ public class TreasureIslandAppAuto implements Runnable
 				break;
 			}
 		}
+		//Take care of remaining messages.
+		try
+		{
+			Object[] obj = (Object[]) paxos.acceptTOMsg();
+			while (obj != null) 
+			{
+				logger.fine("Received :" + Arrays.toString(obj));
+				move((Integer)obj[0], (Character)obj[1]);
+				obj = (Object[]) paxos.acceptTOMsg();
+			}
+		}
+		catch(InterruptedException ie)
+		{
+		}
 	}
 
 	public void displayIsland()
