@@ -60,8 +60,18 @@ public class TreasureIslandAppAuto implements Runnable
 			try
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
-				logger.fine("Received :" + Arrays.toString(info));
-				move((Integer)info[0], (Character)info[1], updateDisplay);
+				if(info != null){
+					logger.fine("Received :" + Arrays.toString(info));
+					// move((Integer)info[0], (Character)info[1], updateDisplay);
+					logger.fine("Integer 0:" + (Integer)info[0]);
+					logger.fine("Integer 1:" + (Character)info[1]);
+
+					if(info[1]!= null) {
+						move((Integer)info[0], (Character)info[1], updateDisplay);
+					}
+
+				}
+				
 				//displayIsland(); //we do not want to keep constantly refreshing the output display.
 			}
 			catch(InterruptedException ie)

@@ -39,9 +39,11 @@ public class TreasureIslandApp implements Runnable
 			try
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
-				logger.fine("Received :" + Arrays.toString(info));
-				move((Integer)info[0], (Character)info[1]);
-				displayIsland();
+				if(info != null) {
+					logger.fine("Received :" + Arrays.toString(info));
+					move((Integer)info[0], (Character)info[1]);
+					displayIsland();
+				}
 			}
 			catch(InterruptedException ie)
 			{
