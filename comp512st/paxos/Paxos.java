@@ -228,7 +228,7 @@ public class Paxos
 
 	synchronized private void handleConfirmValue(double ballotID, Object message)
 	{
-		messagesTreeMap.put(new Double(ballotID), message);
+		messagesTreeMap.put(ballotID, message);
 		acceptedValue = null;
 	}
 
@@ -281,7 +281,8 @@ public class Paxos
 
 			return returnObj;
 		}
-		while (message == null && shouldContinue)
+		
+		while (message == null)
 		{
 			try 
 			{
@@ -301,12 +302,13 @@ public class Paxos
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
-		shouldContinue = false;
 		try
 		{
 			paxosThread.join(1000);
 		}
 		catch (InterruptedException e) {}
+		
+		shouldContinue = false;
 		gcl.shutdownGCL();
 	}
 
