@@ -35,7 +35,8 @@ public class Paxos
 	/*
 	* Static helper variables
 	*/
-	private static final long THREAD_SLEEP_MAX_MILLIS = 15;
+	private static final long THREAD_SLEEP_MAX_MILLIS = 70;
+	private static final long THREAD_POLLING_LOOP_SLEEP = 70;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -50,6 +51,7 @@ public class Paxos
 	private static final String APPLICATION_TERMINATION_MESSAGE = "apptermination";
 	
 	private boolean shouldContinue = true;
+	private boolean applicationInTerminationProcess = false;
 
 	/*
 	* Helper variables meant for both proposers and acceptors.
@@ -67,8 +69,8 @@ public class Paxos
 	private double lastAcceptedBallotID;
 	private Object lastAcceptedValue;
 	private int processCount;
-	private Dictionary<String, TriStateResponse> promises;
-	private Dictionary<String, Boolean> processesState;
+	private Dictionary<String, TriStateResponse> leaderPromises;
+	private Dictionary<String, TriStateResponse> valuePromises;
 
 	/*
 	* Private variables meant for the acceptors
@@ -91,66 +93,58 @@ public class Paxos
 		lastAcceptedBallotID = -1.0;
 		lastAcceptedValue = null;
 
-		resetPromises();
-		initializeProcessStates();
+		resetLeaderPromises();
+		resetValuePromises();
 
 		paxosThread = new Thread(new PaxosThread());
 		paxosThread.start();
 	}
 
-	synchronized private void resetPromises()
+	synchronized private void resetLeaderPromises()
 	{
-		promises = new Hashtable<String, TriStateResponse>();
+		leaderPromises = new Hashtable<String, TriStateResponse>();
 		for (String process : allProcesses)
 		{
-			promises.put(process, TriStateResponse.NORESPONSE);
+			leaderPromises.put(process, TriStateResponse.NORESPONSE);
 		}
 	}
-
-	synchronized private void initializeProcessStates()
+	
+	synchronized private void resetValuePromises()
 	{
-		processesState = new Hashtable<String, Boolean>();
+		valuePromises = new Hashtable<String, TriStateResponse>();
 		for (String process : allProcesses)
 		{
-			processesState.put(process, true);
+			valuePromises.put(process, TriStateResponse.NORESPONSE);
 		}
-	}
-
-	synchronized private boolean verifyMajorityOfProcessesAreUp()
-	{
-		int upCount = 0;
-		for (String process : allProcesses)
-		{
-			if (processesState.get(process))
-			{
-				upCount++; 
-			}
-		}
-		return (((double)upCount) / ((double)processCount)) > 0.5;
 	}
 
 	// This is what the application layer is going to call to send a message/value, such as the player and the move
 	public void broadcastTOMsg(Object val)
 	{
 		Object[] obj = (Object[])val;
+		logger.fine("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
 		boolean mustRestartPaxosProcess = true;
 		while(mustRestartPaxosProcess)
 		{
 			boolean mustRestartProposePhases = true;
 			while(mustRestartProposePhases)
 			{
+				logger.fine("Player: " + obj[0] + " entering first phase of paxos");
+				resetLeaderPromises();
 				//First step: Propose to be the leader
 				while (!proposeToBeLeader((int)obj[0]))
 				{
-					resetPromises();
+					resetLeaderPromises();
 					try
 					{
 						Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 					}
 					catch (InterruptedException ie) {}
 				}
-				resetPromises();
+				resetLeaderPromises();
 
+				resetValuePromises();
+				logger.fine("Player: " + obj[0] + " entering second phase of paxos");
 				//Second step: Propose a value
 				TriStateResponse response = proposeValue(val);
 				if(response == TriStateResponse.ACCEPT)
@@ -162,10 +156,10 @@ public class Paxos
 				{
 					currentProposerBallotID = currentHighestBallotID;
 				}
-				resetPromises();
+				resetValuePromises();
 			}
 			
-			
+			logger.fine("Player: " + obj[0] + " entering third phase of paxos");
 			//Third step confirm value
 			if (lastAcceptedValue != null)
 			{
@@ -194,20 +188,25 @@ public class Paxos
 			Object[] acceptMsg;
 			if (acceptedValue == null)
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, proposerBallotID };
+				logger.fine("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID);
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, proposerPlayerID, proposerBallotID };
 			}
 			else 
 			{
-				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, currentHighestBallotID,  acceptedValue };
+				logger.fine("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". However, previous value was accepted: " + acceptedValue);
+				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, proposerPlayerID, currentHighestBallotID,  acceptedValue };
 			}
 
 			currentHighestBallotID = proposerBallotID;
-			gcl.sendMsg(acceptMsg, senderProcess);
+			if (!applicationInTerminationProcess)
+				gcl.sendMsg(acceptMsg, senderProcess);
 		}
 		else
 		{
+			logger.fine("Denying player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". current highest ballotID: " + currentHighestBallotID);
 			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
-			gcl.sendMsg(denyMsg, senderProcess);
+			if (!applicationInTerminationProcess)
+				gcl.sendMsg(denyMsg, senderProcess);
 		}
 
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
@@ -215,12 +214,12 @@ public class Paxos
 
 	synchronized private void handlePromiseAcceptMessage(String senderProcess)
 	{
-		synchronized(promises)
+		synchronized(leaderPromises)
 		{
 			try
 			{
-				promises.remove(senderProcess);
-				promises.put(senderProcess, TriStateResponse.ACCEPT);
+				leaderPromises.remove(senderProcess);
+				leaderPromises.put(senderProcess, TriStateResponse.ACCEPT);
 			}
 			catch (Exception e)
 			{}
@@ -237,8 +236,8 @@ public class Paxos
 
 		try
 		{
-			promises.remove(senderProcess);
-			promises.put(senderProcess, TriStateResponse.ACCEPT);
+			leaderPromises.remove(senderProcess);
+			leaderPromises.put(senderProcess, TriStateResponse.ACCEPT);
 		}
 		catch (Exception e)
 		{}
@@ -248,8 +247,8 @@ public class Paxos
 	{
 		try
 		{
-			promises.remove(senderProcess);
-			promises.put(senderProcess, TriStateResponse.DENY);
+			leaderPromises.remove(senderProcess);
+			leaderPromises.put(senderProcess, TriStateResponse.DENY);
 			currentHighestBallotID = (double)highestBallotID;
 		}
 		catch (Exception e){}
@@ -257,6 +256,8 @@ public class Paxos
 
 	synchronized private void handleConfirmValue(double ballotID, Object message)
 	{
+		Object[] obj = (Object[]) message;
+		logger.fine("Adding message to tree map: " + "{ BallotID: " + ballotID + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
 		messagesTreeMap.put(ballotID, message);
 		acceptedValue = null;
 	}
@@ -273,15 +274,16 @@ public class Paxos
 		{
 			msg = new Object[] { PAXOS_PHASE_PROPOSE_VALUE_DENYACK, ballotID };	
 		}
-		gcl.sendMsg(msg, senderProcess);
+		if (!applicationInTerminationProcess)
+			gcl.sendMsg(msg, senderProcess);
 	}
 
 	synchronized private void handleProposeValueAcceptAckMessage(String senderProcess)
 	{
 		try
 		{
-			promises.remove(senderProcess);
-			promises.put(senderProcess, TriStateResponse.ACCEPT);
+			valuePromises.remove(senderProcess);
+			valuePromises.put(senderProcess, TriStateResponse.ACCEPT);
 		}
 		catch (Exception e){}
 	}
@@ -290,47 +292,24 @@ public class Paxos
 	{
 		try
 		{
-			promises.remove(senderProcess);
-			promises.put(senderProcess, TriStateResponse.DENY);
+			valuePromises.remove(senderProcess);
+			valuePromises.put(senderProcess, TriStateResponse.DENY);
 			currentHighestBallotID = (double)highestBallotID;
 		}
 		catch (Exception e){}
 	}
 
-	synchronized private void handleProcessShutdown(Object process)
+	synchronized private void handleProcessShutdown(String process)
 	{
-		processesState.remove((String)process);
-		processesState.put((String)process, false);
-		if (((String)process).equals(myProcess))
+		logger.fine("Adding message to tree map: PROCESS TERMINATION"); 
+		if (myProcess.equals(process))
 		{
-			logger.fine("received shutdown from process: " + (String)process);
 			messagesTreeMap.put(Double.MAX_VALUE, new Object[] { TERMINATION_MESSAGE });
 		}
 		else 
 		{
-			
-			logger.fine("received shutdown from process: " + (String)process);
-			if (!verifyMajorityOfProcessesAreUp())
-			{
-				//end the game
-				Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
-				gcl.broadcastMsg(obj);
-
-				try
-				{
-					paxosThread.join(1000);
-				}
-				catch (InterruptedException e) {}
-				
-				shouldContinue = false;
-				gcl.shutdownGCL();
-			}
+			messagesTreeMap.put(Double.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
 		}
-	}
-
-	private void handleApplicationShutdown()
-	{
-		messagesTreeMap.put(Double.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
 	}
 
 	// This is what the application layer is calling to figure out what is the next message in the total order.
@@ -338,13 +317,14 @@ public class Paxos
 	public Object acceptTOMsg() throws InterruptedException
 	{
 		Map.Entry message = messagesTreeMap.pollFirstEntry();
-		Object returnObj = null;
+		Object[] returnObj = null;
 		
 		while (message == null)
 		{
 			try 
 			{
-				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
+				Thread.sleep(THREAD_POLLING_LOOP_SLEEP);
+				logger.fine("Inside polling loop");
 				message = messagesTreeMap.pollFirstEntry();
 			}
 			catch (Exception e) {}
@@ -352,10 +332,18 @@ public class Paxos
 			
 		if (message != null)
 		{
-			returnObj = message.getValue();
-			if (((Object[])returnObj)[0] instanceof String)
+			returnObj = (Object[])message.getValue();
+			if (returnObj[0] instanceof String)
 			{
-				logger.fine("Retrieving termination message: " + (String)((Object[])returnObj)[0]);
+				logger.fine("Retrieving termination message: " + (String)returnObj[0]);
+				if (((String)returnObj[0]).equals(APPLICATION_TERMINATION_MESSAGE))
+				{
+					applicationInTerminationProcess = true;
+				}
+			}
+			else 
+			{
+				logger.fine("returning message: " + (Integer)returnObj[0] + ", " + (Character)returnObj[1]);
 			}
 		}
 		return returnObj;
@@ -364,29 +352,42 @@ public class Paxos
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
-		Object[] obj = new Object[] { PAXOS_PHASE_PROCESS_SHUTDOWN, myProcess };
-		gcl.broadcastMsg(obj);
-
-		try
+		if (!applicationInTerminationProcess)
 		{
-			paxosThread.join(1000);
+			Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
+			gcl.broadcastMsg(obj);
+
+			try
+			{
+				paxosThread.join(1000);
+			}
+			catch (InterruptedException e) {}
+			shouldContinue = false;
+			gcl.shutdownGCL();
 		}
-		catch (InterruptedException e) {}
-		
-		shouldContinue = false;
-		gcl.shutdownGCL();
+		else
+		{
+			try
+			{
+				paxosThread.join(1000);
+			}
+			catch (InterruptedException e) {}
+			shouldContinue = false;
+		}
 	}
 
 	private boolean proposeToBeLeader(int processID)
 	{
 		currentProposerBallotID += 0.1;
 		
+		logger.fine("Player: " + processID + " proposing to be a leader with ballotID: " + currentProposerBallotID);
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
-		gcl.broadcastMsg(obj);
+		if (!applicationInTerminationProcess)
+			gcl.broadcastMsg(obj);
 
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 
-		TriStateResponse response = hasMajority();
+		TriStateResponse response = hasMajority(true);
 		while (response == TriStateResponse.NORESPONSE)
 		{	
 			try
@@ -394,7 +395,7 @@ public class Paxos
 				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 			}
 			catch (InterruptedException ie) {}
-			response = hasMajority();
+			response = hasMajority(true);
 		}
 		if (response == TriStateResponse.DENY)
 		{
@@ -419,10 +420,11 @@ public class Paxos
 		{
 			obj = new Object[] { PAXOS_PHASE_PROPOSE_VALUE, currentProposerBallotID, val };
 		}
-		
-		gcl.broadcastMsg(obj);
 
-		TriStateResponse response = hasMajority();
+		if (!applicationInTerminationProcess)
+			gcl.broadcastMsg(obj);
+
+		TriStateResponse response = hasMajority(false);
 		while (response == TriStateResponse.NORESPONSE)
 		{	
 			try
@@ -430,7 +432,7 @@ public class Paxos
 				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
 			}
 			catch (InterruptedException ie) {}
-			response = hasMajority();
+			response = hasMajority(false);
 		}
 
 		return response;
@@ -439,30 +441,41 @@ public class Paxos
 	private void confirmValue(double ballotID, Object val)
 	{
 		Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, ballotID, val };
-		gcl.broadcastMsg(obj);
+		if (!applicationInTerminationProcess)
+			gcl.broadcastMsg(obj);
 	}
 
-	private TriStateResponse hasMajority()
+	private TriStateResponse hasMajority(boolean isLeaderPhase)
 	{
 		int acceptCount = 0;
 		int denyCount = 0;
 		
+		Dictionary<String, TriStateResponse> dictionary;
+		if (isLeaderPhase)
+		{
+			dictionary = leaderPromises;
+		}
+		else
+		{
+			dictionary = valuePromises;
+		}
+
 		for (String process : allProcesses)
 		{
-			if (promises.get(process) == TriStateResponse.NORESPONSE || process.equals(myProcess))
+			if (dictionary.get(process) == TriStateResponse.NORESPONSE)
 			{
 				continue;
 			}
-			else if (promises.get(process) == TriStateResponse.ACCEPT)
+			else if (dictionary.get(process) == TriStateResponse.ACCEPT)
 			{
 				acceptCount ++;
-				if (((double)acceptCount / (double)(processCount - 1)) > 0.5)
+				if (((double)acceptCount / (double)(processCount)) > 0.5)
 					return TriStateResponse.ACCEPT;
 			}
-			else if (promises.get(process) == TriStateResponse.DENY)
+			else if (dictionary.get(process) == TriStateResponse.DENY)
 			{
 				denyCount ++;
-				if (((double)denyCount / (double)(processCount - 1)) > 0.5)
+				if (((double)denyCount / (double)(processCount)) > 0.5)
 					return TriStateResponse.DENY;
 			}
 		}
@@ -487,43 +500,50 @@ public class Paxos
 
 					if (obj[0].equals(PAXOS_PHASE_PROPOSE_LEADER))
 					{
+						logger.fine("Received propose to be leader message from player: " + obj[1]);
 						handleProposalFromLeaderMessage(gcmsg.senderProcess, (int)obj[1], obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT))
 					{
+						logger.fine("Received promise accept message from player: " + obj[1]);
 						handlePromiseAcceptMessage(gcmsg.senderProcess);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE))
 					{
-						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[1], obj[2]);
+						logger.fine("Received promise accept with previous value message from player: " + obj[1]);
+						handlePromiseAcceptWithPreviousValue(gcmsg.senderProcess, obj[2], obj[3]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROMISE_DENY))
 					{
+						logger.fine("Received promise deny message from player: " + obj[1]);
 						handlePromiseDenyMessage(gcmsg.senderProcess, obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE))
 					{
+						
+						Object[] o = (Object[])obj[2];
+						logger.fine("Recevived propose value from process: " + o[0]);
 						handleProposeValueFromLeaderMessage(gcmsg.senderProcess, obj[1], obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK))
 					{
+						logger.fine("Recevived accept propose value from process: " + gcmsg.senderProcess);
 						handleProposeValueAcceptAckMessage(gcmsg.senderProcess);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_PROPOSE_VALUE_DENYACK))
 					{
+						logger.fine("Recevived deny propose value from process: " + gcmsg.senderProcess);
 						handleProposeValueDenyAckMessage(gcmsg.senderProcess, obj[1]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
 					{
+						logger.fine("Recevived confirm value from process: " + gcmsg.senderProcess);
 						handleConfirmValue((double)obj[1], obj[2]);
-					}
-					else if (obj[0].equals(PAXOS_PHASE_PROCESS_SHUTDOWN))
-					{
-						handleProcessShutdown(obj[1]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_APPLICATION_SHUTDOWN))
 					{
-						handleApplicationShutdown();
+						logger.fine("Received shutdown from process: " + gcmsg.senderProcess);
+						handleProcessShutdown((String)obj[1]);
 					}
 				}
 				catch (InterruptedException ie) 
