@@ -60,9 +60,31 @@ public class TreasureIslandAppAuto implements Runnable
 			try
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
-				logger.fine("Received :" + Arrays.toString(info));
-				move((Integer)info[0], (Character)info[1], updateDisplay);
-				//displayIsland(); //we do not want to keep constantly refreshing the output display.
+				if (info[0] instanceof String)
+				{
+					String termination = (String)info[0];
+					if (termination.equals("termination"))
+					{
+						return;
+					}
+					else if (termination.equals("apptermination"))
+					{
+						logger.info("Shutting down Paxos");
+						keepExploring = false;
+						tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
+						tiThread.interrupt(); // interrupt the app thread if it has not terminated.
+						displayIsland(); // display the final map
+						logger.info("Process terminated.");
+						System.exit(0);
+						return;
+					}
+				}
+				else 
+				{
+					logger.fine("Received :" + Arrays.toString(info));
+					move((Integer)info[0], (Character)info[1]);
+					//displayIsland();
+				}
 			}
 			catch(InterruptedException ie)
 			{

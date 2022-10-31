@@ -31,6 +31,7 @@ public class Paxos
 {
 	GCL gcl;
 	FailCheck failCheck;
+	Logger logger;
 	/*
 	* Static helper variables
 	*/
@@ -43,6 +44,10 @@ public class Paxos
 	private static final String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
+	private static final String PAXOS_PHASE_PROCESS_SHUTDOWN = "processshutdown";
+	private static final String PAXOS_PHASE_APPLICATION_SHUTDOWN = "applicationshutdown";
+	private static final String TERMINATION_MESSAGE = "termination";
+	private static final String APPLICATION_TERMINATION_MESSAGE = "apptermination";
 	
 	private boolean shouldContinue = true;
 
@@ -63,6 +68,7 @@ public class Paxos
 	private Object lastAcceptedValue;
 	private int processCount;
 	private Dictionary<String, TriStateResponse> promises;
+	private Dictionary<String, Boolean> processesState;
 
 	/*
 	* Private variables meant for the acceptors
@@ -73,7 +79,7 @@ public class Paxos
 	{
 		// Rember to call the failCheck.checkFailure(..) with appropriate arguments throughout your Paxos code to force fail points if necessary.
 		this.failCheck = failCheck;
-
+		this.logger = logger;
 		// Initialize the GCL communication system as well as anything else you need to.
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
@@ -86,6 +92,7 @@ public class Paxos
 		lastAcceptedValue = null;
 
 		resetPromises();
+		initializeProcessStates();
 
 		paxosThread = new Thread(new PaxosThread());
 		paxosThread.start();
@@ -98,6 +105,28 @@ public class Paxos
 		{
 			promises.put(process, TriStateResponse.NORESPONSE);
 		}
+	}
+
+	synchronized private void initializeProcessStates()
+	{
+		processesState = new Hashtable<String, Boolean>();
+		for (String process : allProcesses)
+		{
+			processesState.put(process, true);
+		}
+	}
+
+	synchronized private boolean verifyMajorityOfProcessesAreUp()
+	{
+		int upCount = 0;
+		for (String process : allProcesses)
+		{
+			if (processesState.get(process))
+			{
+				upCount++; 
+			}
+		}
+		return (((double)upCount) / ((double)processCount)) > 0.5;
 	}
 
 	// This is what the application layer is going to call to send a message/value, such as the player and the move
@@ -268,19 +297,48 @@ public class Paxos
 		catch (Exception e){}
 	}
 
+	synchronized private void handleProcessShutdown(Object process)
+	{
+		processesState.remove((String)process);
+		processesState.put((String)process, false);
+		if (((String)process).equals(myProcess))
+		{
+			logger.fine("received shutdown from process: " + (String)process);
+			messagesTreeMap.put(Double.MAX_VALUE, new Object[] { TERMINATION_MESSAGE });
+		}
+		else 
+		{
+			
+			logger.fine("received shutdown from process: " + (String)process);
+			if (!verifyMajorityOfProcessesAreUp())
+			{
+				//end the game
+				Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
+				gcl.broadcastMsg(obj);
+
+				try
+				{
+					paxosThread.join(1000);
+				}
+				catch (InterruptedException e) {}
+				
+				shouldContinue = false;
+				gcl.shutdownGCL();
+			}
+		}
+	}
+
+	private void handleApplicationShutdown()
+	{
+		messagesTreeMap.put(Double.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
+	}
+
 	// This is what the application layer is calling to figure out what is the next message in the total order.
 	// Messages delivered in ALL the processes in the group should deliver this in the same order.
 	public Object acceptTOMsg() throws InterruptedException
 	{
 		Map.Entry message = messagesTreeMap.pollFirstEntry();
 		Object returnObj = null;
-		if (!shouldContinue)
-		{
-			if (message != null)
-				returnObj = message.getValue();
-
-			return returnObj;
-		}
 		
 		while (message == null)
 		{
@@ -295,6 +353,10 @@ public class Paxos
 		if (message != null)
 		{
 			returnObj = message.getValue();
+			if (((Object[])returnObj)[0] instanceof String)
+			{
+				logger.fine("Retrieving termination message: " + (String)((Object[])returnObj)[0]);
+			}
 		}
 		return returnObj;
 	}
@@ -302,6 +364,9 @@ public class Paxos
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
+		Object[] obj = new Object[] { PAXOS_PHASE_PROCESS_SHUTDOWN, myProcess };
+		gcl.broadcastMsg(obj);
+
 		try
 		{
 			paxosThread.join(1000);
@@ -384,7 +449,7 @@ public class Paxos
 		
 		for (String process : allProcesses)
 		{
-			if (promises.get(process) == TriStateResponse.NORESPONSE)
+			if (promises.get(process) == TriStateResponse.NORESPONSE || process.equals(myProcess))
 			{
 				continue;
 			}
@@ -451,6 +516,14 @@ public class Paxos
 					else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
 					{
 						handleConfirmValue((double)obj[1], obj[2]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_PROCESS_SHUTDOWN))
+					{
+						handleProcessShutdown(obj[1]);
+					}
+					else if (obj[0].equals(PAXOS_PHASE_APPLICATION_SHUTDOWN))
+					{
+						handleApplicationShutdown();
 					}
 				}
 				catch (InterruptedException ie) 
