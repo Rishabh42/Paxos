@@ -4,7 +4,7 @@
 BASEDIR=$HOME/COMP512/PA2/COMP512-paxos
 
 #TODO update your group number here inpace of XX
-group=40
+group=43
 
 #TODO Optional
 # this will always generate the same game island. Change the last digits to any number if you want to change it to a different island map. Otherwise leave it as it is.
@@ -12,7 +12,7 @@ gameid=game-$group-99
 
 #TODO edit these entries to put the name of the server that you are using and the associated ports.
 # Remember to start the script from this host
-export autotesthost=lab2-12
+export autotesthost=lab2-7
 # player1 -> process 1, player 2 -> process 2, etc .. add more depending on how many players are playing.
 # Script automatically counts the variables to figure out the number of players.
 export process1=${autotesthost}:401$group
@@ -26,7 +26,7 @@ export process8=${autotesthost}:408$group
 export process9=${autotesthost}:409$group
 
 #TODO update these values as needed
-maxmoves=10 interval=100 randseed=xxxxxxxxx
+maxmoves=40 interval=100 randseed=xxxxxxxxx
 #TODO IF (and only if) you want to simulate failures, enable this for corresponding player numbers.
 #export failmode_N=RECEIVEPROPOSE
 #export failmode_N=AFTERSENDVOTE

@@ -84,7 +84,6 @@ public class TreasureIslandAppAuto implements Runnable
 				{
 					logger.fine("Received :" + Arrays.toString(info));
 					move((Integer)info[0], (Character)info[1], updateDisplay);
-					//displayIsland();
 				}
 			}
 			catch(InterruptedException ie)

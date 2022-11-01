@@ -35,8 +35,8 @@ public class Paxos
 	/*
 	* Static helper variables
 	*/
-	private static final long THREAD_SLEEP_MAX_MILLIS = 70;
-	private static final long THREAD_POLLING_LOOP_SLEEP = 70;
+	private static final long THREAD_SLEEP_MAX_MILLIS = 150;
+	private static final long THREAD_POLLING_LOOP_SLEEP = 150;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -260,6 +260,11 @@ public class Paxos
 	{
 		Object[] obj = (Object[]) message;
 		logger.fine("Adding message to tree map: " + "{ proposerMessageCount: " + proposerMessageCount + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
+		if (messagesTreeMap.get(proposerMessageCount) != null)
+		{
+			//TODO: means we have a collision
+		}
+
 		messagesTreeMap.put(proposerMessageCount, message);
 
 		try
@@ -319,6 +324,7 @@ public class Paxos
 		}
 		else 
 		{
+			applicationInTerminationProcess = true;
 			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
 		}
 	}
@@ -330,10 +336,17 @@ public class Paxos
 		Map.Entry message = messagesTreeMap.firstEntry();
 		Object[] returnObj = null;
 		
+		int retryAttempts = 0;
 		while (message == null || (int)message.getKey() > processMessageCount)
 		{
 			if (message != null && (int)message.getKey() != Integer.MAX_VALUE)
 				break;
+				
+			if (applicationInTerminationProcess)
+				retryAttempts++;
+
+			if (retryAttempts == 25)
+				return new Object[] { APPLICATION_TERMINATION_MESSAGE };
 
 			try 
 			{
@@ -351,10 +364,6 @@ public class Paxos
 			if (returnObj[0] instanceof String)
 			{
 				logger.fine("Retrieving termination message: " + (String)returnObj[0]);
-				if (((String)returnObj[0]).equals(APPLICATION_TERMINATION_MESSAGE))
-				{
-					applicationInTerminationProcess = true;
-				}
 			}
 			else 
 			{
@@ -376,20 +385,20 @@ public class Paxos
 
 			try
 			{
-				paxosThread.join(1000);
+				shouldContinue = false;
+				paxosThread.join(500);
 			}
 			catch (InterruptedException e) {}
-			shouldContinue = false;
 			gcl.shutdownGCL();
 		}
 		else
 		{
 			try
 			{
-				paxosThread.join(1000);
+				shouldContinue = false;
+				paxosThread.join(500);
 			}
 			catch (InterruptedException e) {}
-			shouldContinue = false;
 		}
 	}
 
@@ -460,6 +469,10 @@ public class Paxos
 		try
 		{
 			lock.acquire();
+			if (messagesTreeMap.get(globalMessageCount) != null)
+			{
+				globalMessageCount++;
+			}
 			Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, globalMessageCount, val };
 			if (!applicationInTerminationProcess)
 				gcl.broadcastMsg(obj);
