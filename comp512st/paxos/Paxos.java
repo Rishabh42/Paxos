@@ -1,9 +1,8 @@
 package comp512st.paxos;
 
 // Access to the GCL layer
-import comp512.gcl.*;	import java.io.*;
+import comp512.gcl.*;
 import java.net.UnknownHostException;
-import java.util.logging.*;
 import java.util.Dictionary;
 import java.util.Hashtable;
 import comp512.utils.*;	
@@ -11,22 +10,9 @@ import java.util.LinkedList;
 import java.util.*;
 import java.util.Queue;
 import java.util.concurrent.*;
-
-import java.util.logging.*;
-
-// Any other imports that you may need.	// Any other imports that you may need.
 import java.io.*;	
 import java.util.logging.*;	
-import java.net.UnknownHostException;
 
-// Any other imports that you may need.
-
-
-// ANY OTHER classes, etc., that you add must be private to this package and not visible to the application layer.
-
-// extend / implement whatever interface, etc. as required.
-// NO OTHER public members / methods allowed. broadcastTOMsg, acceptTOMsg, and shutdownPaxos must be the only visible methods to the application layer.
-//		You should also not change the signature of these methods (arguments and return value) other aspects maybe changed with reasonable design needs.
 public class Paxos
 {
 	GCL gcl;
@@ -75,6 +61,7 @@ public class Paxos
 	private Integer globalMessageCount = 0;
 	private int processMessageCount = 0;
 
+	private boolean confirmFailed = true;
 	/*
 	* Private variables meant for the acceptors
 	*/
@@ -174,8 +161,10 @@ public class Paxos
 			else
 			{
 				confirmValue(currentProposerBallotID, val);
-				mustRestartPaxosProcess = false;
+				
 			}
+			if (!confirmFailed)
+				mustRestartPaxosProcess = false;
 		}
 		
 	}
@@ -471,7 +460,12 @@ public class Paxos
 			lock.acquire();
 			if (messagesTreeMap.get(globalMessageCount) != null)
 			{
-				globalMessageCount++;
+				confirmFailed = true;
+				return;
+			}
+			else
+			{
+				confirmFailed = false;
 			}
 			Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, globalMessageCount, val };
 			if (!applicationInTerminationProcess)
