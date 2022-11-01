@@ -21,8 +21,10 @@ public class Paxos
 	/*
 	* Static helper variables
 	*/
-	private static final long THREAD_SLEEP_MAX_MILLIS = 150;
-	private static final long THREAD_POLLING_LOOP_SLEEP = 150;
+	private static final int THREAD_SLEEP_MAX_MILLIS = 200;
+	private static final int THREAD_SLEEP_MIN_MILLIS = 120;
+	private static final long THREAD_POLLING_LOOP_SLEEP = 175;
+	private static final long THREAD_TERMINATION_SLEEP = 1000;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -40,6 +42,7 @@ public class Paxos
 	private boolean applicationInTerminationProcess = false;
 
 	private Semaphore lock;
+	private Random rand;
 	/*
 	* Helper variables meant for both proposers and acceptors.
 	*/
@@ -56,6 +59,7 @@ public class Paxos
 	private double lastAcceptedBallotID;
 	private Object lastAcceptedValue;
 	private int processCount;
+	private int upProcesses;
 	private Dictionary<String, TriStateResponse> leaderPromises;
 	private Dictionary<String, TriStateResponse> valuePromises;
 	private Integer globalMessageCount = 0;
@@ -76,8 +80,10 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		this.myProcess = myProcess;
+		this.rand = new Random();
 		lock = new Semaphore(1);
 		processCount = allGroupProcesses.length;
+		upProcesses = processCount;
 		allProcesses = allGroupProcesses;
 		messagesTreeMap = new TreeMap<Integer, Object>();
 		acceptedValue = null;
@@ -112,61 +118,61 @@ public class Paxos
 	// This is what the application layer is going to call to send a message/value, such as the player and the move
 	public void broadcastTOMsg(Object val)
 	{
-		Object[] obj = (Object[])val;
-		logger.fine("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
-		boolean mustRestartPaxosProcess = true;
-		while(mustRestartPaxosProcess)
+		try
 		{
-			boolean mustRestartProposePhases = true;
-			while(mustRestartProposePhases)
+			Thread.sleep((long)(THREAD_SLEEP_MIN_MILLIS + rand.nextInt(THREAD_SLEEP_MAX_MILLIS)));
+			Object[] obj = (Object[])val;
+			logger.fine("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
+			boolean mustRestartPaxosProcess = true;
+			while(mustRestartPaxosProcess)
 			{
-				logger.fine("Player: " + obj[0] + " entering first phase of paxos");
-				resetLeaderPromises();
-				//First step: Propose to be the leader
-				while (!proposeToBeLeader((int)obj[0]))
+				boolean mustRestartProposePhases = true;
+				while(mustRestartProposePhases)
 				{
+					logger.fine("Player: " + obj[0] + " entering first phase of paxos");
 					resetLeaderPromises();
-					try
+					//First step: Propose to be the leader
+					while (!proposeToBeLeader((int)obj[0]))
 					{
-						Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
+						resetLeaderPromises();
+						Thread.sleep((long)(THREAD_SLEEP_MIN_MILLIS + rand.nextInt(THREAD_SLEEP_MAX_MILLIS)));
 					}
-					catch (InterruptedException ie) {}
-				}
-				resetLeaderPromises();
+					resetLeaderPromises();
 
-				resetValuePromises();
-				logger.fine("Player: " + obj[0] + " entering second phase of paxos");
-				//Second step: Propose a value
-				TriStateResponse response = proposeValue(val);
-				if(response == TriStateResponse.ACCEPT)
+					resetValuePromises();
+					logger.fine("Player: " + obj[0] + " entering second phase of paxos");
+					//Second step: Propose a value
+					TriStateResponse response = proposeValue(val);
+					if(response == TriStateResponse.ACCEPT)
+					{
+						failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
+						mustRestartProposePhases = false;
+					}
+					else
+					{
+						currentProposerBallotID = currentHighestBallotID;
+					}
+					resetValuePromises();
+				}
+				
+				logger.fine("Player: " + obj[0] + " entering third phase of paxos");
+				//Third step confirm value
+				if (lastAcceptedValue != null)
 				{
-					failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
-					mustRestartProposePhases = false;
+					confirmValue(currentProposerBallotID, lastAcceptedValue);
+					lastAcceptedValue = null;
+					lastAcceptedBallotID = -1.0;
 				}
 				else
 				{
-					currentProposerBallotID = currentHighestBallotID;
+					confirmValue(currentProposerBallotID, val);
+					
 				}
-				resetValuePromises();
+				if (!confirmFailed)
+					mustRestartPaxosProcess = false;
 			}
-			
-			logger.fine("Player: " + obj[0] + " entering third phase of paxos");
-			//Third step confirm value
-			if (lastAcceptedValue != null)
-			{
-				confirmValue(currentProposerBallotID, lastAcceptedValue);
-				lastAcceptedValue = null;
-				lastAcceptedBallotID = -1.0;
-			}
-			else
-			{
-				confirmValue(currentProposerBallotID, val);
-				
-			}
-			if (!confirmFailed)
-				mustRestartPaxosProcess = false;
 		}
-		
+		catch (InterruptedException e){}
 	}
 
 	synchronized private void handleProposalFromLeaderMessage(String senderProcess, int proposerPlayerID, Object proposalID)
@@ -306,16 +312,15 @@ public class Paxos
 
 	synchronized private void handleProcessShutdown(String process)
 	{
-		logger.fine("Adding message to tree map: PROCESS TERMINATION"); 
-		if (myProcess.equals(process))
+		logger.fine("Adding message to tree map: PROCESS TERMINATION");
+		applicationInTerminationProcess = true; 
+		upProcesses --;
+		if (process.equals(myProcess) && upProcesses == 0)
 		{
-			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { TERMINATION_MESSAGE });
+			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { "termination" });
 		}
-		else 
-		{
-			applicationInTerminationProcess = true;
+		if (upProcesses == 0)
 			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
-		}
 	}
 
 	// This is what the application layer is calling to figure out what is the next message in the total order.
@@ -328,13 +333,13 @@ public class Paxos
 		int retryAttempts = 0;
 		while (message == null || (int)message.getKey() > processMessageCount)
 		{
-			if (message != null && (int)message.getKey() != Integer.MAX_VALUE)
+			if (message != null && (int)message.getKey() == Integer.MAX_VALUE)
 				break;
 				
 			if (applicationInTerminationProcess)
 				retryAttempts++;
 
-			if (retryAttempts == 25)
+			if (retryAttempts == 50 * processCount)
 				return new Object[] { APPLICATION_TERMINATION_MESSAGE };
 
 			try 
@@ -360,35 +365,25 @@ public class Paxos
 			}
 		}
 
-		processMessageCount++;
+		if (!((int)message.getKey() == Integer.MAX_VALUE))
+			processMessageCount++;
 		return returnObj;
 	}
 
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
-		if (!applicationInTerminationProcess)
-		{
-			Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
-			gcl.broadcastMsg(obj);
+		Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
+		gcl.broadcastMsg(obj);
 
-			try
-			{
-				shouldContinue = false;
-				paxosThread.join(500);
-			}
-			catch (InterruptedException e) {}
-			gcl.shutdownGCL();
-		}
-		else
+		try
 		{
-			try
-			{
-				shouldContinue = false;
-				paxosThread.join(500);
-			}
-			catch (InterruptedException e) {}
+			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount * 3);
+			shouldContinue = false;
+		
 		}
+		catch (InterruptedException e) {}
+		gcl.shutdownGCL();
 	}
 
 	private boolean proposeToBeLeader(int processID)
@@ -403,14 +398,19 @@ public class Paxos
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 
 		TriStateResponse response = hasMajority(true);
+		int loopCount = 0;
 		while (response == TriStateResponse.NORESPONSE)
 		{	
+			if (loopCount == 50)
+				return false;
+			logger.fine("Process: " + processID + " inside no response loop to be leader.");
 			try
 			{
-				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
+				Thread.sleep(5);
 			}
 			catch (InterruptedException ie) {}
 			response = hasMajority(true);
+			loopCount++;
 		}
 		if (response == TriStateResponse.DENY)
 		{
@@ -440,14 +440,18 @@ public class Paxos
 			gcl.broadcastMsg(obj);
 
 		TriStateResponse response = hasMajority(false);
+		int loopCount = 0;
 		while (response == TriStateResponse.NORESPONSE)
 		{	
+			if (loopCount == 25)
+				return TriStateResponse.DENY;
 			try
 			{
-				Thread.sleep(THREAD_SLEEP_MAX_MILLIS);
+				Thread.sleep(50);
 			}
 			catch (InterruptedException ie) {}
 			response = hasMajority(false);
+			loopCount++;
 		}
 
 		return response;

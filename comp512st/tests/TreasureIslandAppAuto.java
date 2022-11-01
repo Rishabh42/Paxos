@@ -55,6 +55,7 @@ public class TreasureIslandAppAuto implements Runnable
 
 	public void run()
 	{
+		boolean needsTermination = true;
 		while(keepExploring) // TODO: Make sure all the remaining messages are processed in the case of a graceful shutdown.
 		{
 			try
@@ -65,19 +66,12 @@ public class TreasureIslandAppAuto implements Runnable
 					String termination = (String)info[0];
 					if (termination.equals("termination"))
 					{
-						return;
+						needsTermination = false;
 					}
 					else if (termination.equals("apptermination"))
 					{
 						logger.info("Shutting down Paxos");
-						keepExploring = false;
-						tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
-						paxos.shutdownPaxos();
-						tiThread.interrupt(); // interrupt the app thread if it has not terminated.
-						displayIsland(); // display the final map
-						logger.info("Process terminated.");
-						System.exit(0);
-						return;
+						break;
 					}
 				}
 				else 
@@ -102,14 +96,21 @@ public class TreasureIslandAppAuto implements Runnable
 			{
 				if (obj[0] instanceof String)
 				{
-					return;
+					break;
 				}
 				logger.fine("Received :" + Arrays.toString(obj));
 				move((Integer)obj[0], (Character)obj[1], updateDisplay);
 				obj = (Object[]) paxos.acceptTOMsg();
 			}
-			
-			displayIsland(); // display the final map
+			if (needsTermination)
+			{
+				keepExploring = false;
+				tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
+				tiThread.interrupt(); // interrupt the app thread if it has not terminated.
+				displayIsland(); // display the final map
+				logger.info("Process terminated.");
+				System.exit(0);
+			}
 		}
 		catch(InterruptedException ie)
 		{
