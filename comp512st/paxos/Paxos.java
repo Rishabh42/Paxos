@@ -380,7 +380,7 @@ public class Paxos
 		{
 			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount * 3);
 			shouldContinue = false;
-		
+			Thread.sleep(1000);
 		}
 		catch (InterruptedException e) {}
 		gcl.shutdownGCL();
