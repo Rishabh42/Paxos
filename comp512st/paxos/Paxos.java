@@ -53,6 +53,7 @@ public class Paxos
 	private boolean shouldContinue = true;
 	private boolean applicationInTerminationProcess = false;
 
+	private Semaphore lock;
 	/*
 	* Helper variables meant for both proposers and acceptors.
 	*/
@@ -60,7 +61,7 @@ public class Paxos
 	private String[] allProcesses;
 	private Thread paxosThread;
 	private double currentHighestBallotID = 0.0;
-	private TreeMap<Double, Object> messagesTreeMap;
+	private TreeMap<Integer, Object> messagesTreeMap;
 
 	/*
 	* Private variables meant for the proposers/leaders
@@ -71,6 +72,8 @@ public class Paxos
 	private int processCount;
 	private Dictionary<String, TriStateResponse> leaderPromises;
 	private Dictionary<String, TriStateResponse> valuePromises;
+	private Integer globalMessageCount = 0;
+	private int processMessageCount = 0;
 
 	/*
 	* Private variables meant for the acceptors
@@ -86,9 +89,10 @@ public class Paxos
 		this.gcl = new GCL(myProcess, allGroupProcesses, null, logger) ;
 
 		this.myProcess = myProcess;
+		lock = new Semaphore(1);
 		processCount = allGroupProcesses.length;
 		allProcesses = allGroupProcesses;
-		messagesTreeMap = new TreeMap<Double, Object>();
+		messagesTreeMap = new TreeMap<Integer, Object>();
 		acceptedValue = null;
 		lastAcceptedBallotID = -1.0;
 		lastAcceptedValue = null;
@@ -172,8 +176,6 @@ public class Paxos
 				confirmValue(currentProposerBallotID, val);
 				mustRestartPaxosProcess = false;
 			}
-			
-			
 		}
 		
 	}
@@ -254,11 +256,20 @@ public class Paxos
 		catch (Exception e){}
 	}
 
-	synchronized private void handleConfirmValue(double ballotID, Object message)
+	synchronized private void handleConfirmValue(int proposerMessageCount, Object message)
 	{
 		Object[] obj = (Object[]) message;
-		logger.fine("Adding message to tree map: " + "{ BallotID: " + ballotID + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
-		messagesTreeMap.put(ballotID, message);
+		logger.fine("Adding message to tree map: " + "{ proposerMessageCount: " + proposerMessageCount + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
+		messagesTreeMap.put(proposerMessageCount, message);
+
+		try
+		{
+			lock.acquire();
+			globalMessageCount = ++proposerMessageCount;
+			lock.release();
+		}
+		catch (Exception e){}
+
 		acceptedValue = null;
 	}
 
@@ -304,11 +315,11 @@ public class Paxos
 		logger.fine("Adding message to tree map: PROCESS TERMINATION"); 
 		if (myProcess.equals(process))
 		{
-			messagesTreeMap.put(Double.MAX_VALUE, new Object[] { TERMINATION_MESSAGE });
+			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { TERMINATION_MESSAGE });
 		}
 		else 
 		{
-			messagesTreeMap.put(Double.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
+			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
 		}
 	}
 
@@ -316,22 +327,26 @@ public class Paxos
 	// Messages delivered in ALL the processes in the group should deliver this in the same order.
 	public Object acceptTOMsg() throws InterruptedException
 	{
-		Map.Entry message = messagesTreeMap.pollFirstEntry();
+		Map.Entry message = messagesTreeMap.firstEntry();
 		Object[] returnObj = null;
 		
-		while (message == null)
+		while (message == null || (int)message.getKey() > processMessageCount)
 		{
+			if (message != null && (int)message.getKey() != Integer.MAX_VALUE)
+				break;
+
 			try 
 			{
 				Thread.sleep(THREAD_POLLING_LOOP_SLEEP);
 				logger.fine("Inside polling loop");
-				message = messagesTreeMap.pollFirstEntry();
+				message = messagesTreeMap.firstEntry();
 			}
 			catch (Exception e) {}
 		}
 			
 		if (message != null)
 		{
+			messagesTreeMap.remove((int)message.getKey());
 			returnObj = (Object[])message.getValue();
 			if (returnObj[0] instanceof String)
 			{
@@ -346,6 +361,8 @@ public class Paxos
 				logger.fine("returning message: " + (Integer)returnObj[0] + ", " + (Character)returnObj[1]);
 			}
 		}
+
+		processMessageCount++;
 		return returnObj;
 	}
 
@@ -440,9 +457,16 @@ public class Paxos
 
 	private void confirmValue(double ballotID, Object val)
 	{
-		Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, ballotID, val };
-		if (!applicationInTerminationProcess)
-			gcl.broadcastMsg(obj);
+		try
+		{
+			lock.acquire();
+			Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, globalMessageCount, val };
+			if (!applicationInTerminationProcess)
+				gcl.broadcastMsg(obj);
+			
+			lock.release();
+		}
+		catch (Exception e) {}
 	}
 
 	private TriStateResponse hasMajority(boolean isLeaderPhase)
@@ -538,7 +562,7 @@ public class Paxos
 					else if (obj[0].equals(PAXOS_PHASE_CONFIRM_VALUE))
 					{
 						logger.fine("Recevived confirm value from process: " + gcmsg.senderProcess);
-						handleConfirmValue((double)obj[1], obj[2]);
+						handleConfirmValue((int)obj[1], obj[2]);
 					}
 					else if (obj[0].equals(PAXOS_PHASE_APPLICATION_SHUTDOWN))
 					{

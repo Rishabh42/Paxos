@@ -4,7 +4,7 @@
 BASEDIR=$HOME/COMP512/PA2/COMP512-paxos
 
 #TODO update your group number here inpace of XX
-group=23
+group=40
 
 #TODO Optional
 # this will always generate the same game island. Change the last digits to any number if you want to change it to a different island map. Otherwise leave it as it is.
