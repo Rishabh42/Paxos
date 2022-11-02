@@ -21,10 +21,10 @@ public class Paxos
 	/*
 	* Static helper variables
 	*/
-	private static final int THREAD_SLEEP_MAX_MILLIS = 200;
-	private static final int THREAD_SLEEP_MIN_MILLIS = 120;
-	private static final long THREAD_POLLING_LOOP_SLEEP = 175;
-	private static final long THREAD_TERMINATION_SLEEP = 1000;
+	private static final int THREAD_SLEEP_MAX_MILLIS = 80;
+	private static final int THREAD_SLEEP_MIN_MILLIS = 50;
+	private static final long THREAD_POLLING_LOOP_SLEEP = 50;
+	private static final long THREAD_TERMINATION_SLEEP = 1500;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -171,6 +171,7 @@ public class Paxos
 				if (!confirmFailed)
 					mustRestartPaxosProcess = false;
 			}
+			Thread.sleep(10);
 		}
 		catch (InterruptedException e){}
 	}
@@ -375,10 +376,9 @@ public class Paxos
 	{
 		Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
 		gcl.broadcastMsg(obj);
-
 		try
 		{
-			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount * 3);
+			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount);
 			shouldContinue = false;
 			Thread.sleep(1000);
 		}
@@ -401,14 +401,14 @@ public class Paxos
 		int loopCount = 0;
 		while (response == TriStateResponse.NORESPONSE)
 		{	
-			if (loopCount == 50)
+			if (loopCount == 25)
 				return false;
 			logger.fine("Process: " + processID + " inside no response loop to be leader.");
-			try
-			{
-				Thread.sleep(5);
-			}
-			catch (InterruptedException ie) {}
+			 try
+			 {
+			 	Thread.sleep(5);
+			 }
+			 catch (InterruptedException ie) {}
 			response = hasMajority(true);
 			loopCount++;
 		}
@@ -445,11 +445,11 @@ public class Paxos
 		{	
 			if (loopCount == 25)
 				return TriStateResponse.DENY;
-			try
-			{
-				Thread.sleep(50);
-			}
-			catch (InterruptedException ie) {}
+			 try
+			 {
+			 	Thread.sleep(5);
+			 }
+			 catch (InterruptedException ie) {}
 			response = hasMajority(false);
 			loopCount++;
 		}
