@@ -26,7 +26,7 @@ gameid=game-$group-99
 # player1 -> process 1, player 2 -> process 2, etc .. add more depending on how many players are playing.
 # Remember to start the scripts of corresponding players from the corresponding servers.
 # comment out process3 if you are only playing 2 players, etc.
-export process1=lab2-15:401$group
+export process1=lab2-17:401$group
 export process2=lab2-14:402$group
 #export process3=server3:403$group
 #export process4=server4:404$group

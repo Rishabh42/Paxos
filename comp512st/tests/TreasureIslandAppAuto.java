@@ -55,14 +55,30 @@ public class TreasureIslandAppAuto implements Runnable
 
 	public void run()
 	{
+		boolean needsTermination = true;
 		while(keepExploring) // TODO: Make sure all the remaining messages are processed in the case of a graceful shutdown.
 		{
 			try
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
-				logger.fine("Received :" + Arrays.toString(info));
-				move((Integer)info[0], (Character)info[1], updateDisplay);
-				//displayIsland(); //we do not want to keep constantly refreshing the output display.
+				if (info[0] instanceof String)
+				{
+					String termination = (String)info[0];
+					if (termination.equals("termination"))
+					{
+						needsTermination = false;
+					}
+					else if (termination.equals("apptermination"))
+					{
+						logger.info("Shutting down Paxos");
+						break;
+					}
+				}
+				else 
+				{
+					logger.fine("Received :" + Arrays.toString(info));
+					move((Integer)info[0], (Character)info[1], updateDisplay);
+				}
 			}
 			catch(InterruptedException ie)
 			{
@@ -70,6 +86,34 @@ public class TreasureIslandAppAuto implements Runnable
 					logger.log(Level.SEVERE, "Encountered InterruptedException while waiting for messages.", ie);
 				break;
 			}
+		}
+
+		//Take care of remaining messages.
+		try
+		{
+			Object[] obj = (Object[]) paxos.acceptTOMsg();
+			while (obj != null) 
+			{
+				if (obj[0] instanceof String)
+				{
+					break;
+				}
+				logger.fine("Received :" + Arrays.toString(obj));
+				move((Integer)obj[0], (Character)obj[1], updateDisplay);
+				obj = (Object[]) paxos.acceptTOMsg();
+			}
+			if (needsTermination)
+			{
+				keepExploring = false;
+				tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
+				tiThread.interrupt(); // interrupt the app thread if it has not terminated.
+				displayIsland(); // display the final map
+				logger.info("Process terminated.");
+				System.exit(0);
+			}
+		}
+		catch(InterruptedException ie)
+		{
 		}
 	}
 
@@ -271,7 +315,7 @@ public class TreasureIslandAppAuto implements Runnable
 																							// May have to increase this for higher maxmoves and smaller intervals.
 		try{ Thread.sleep(5000); } catch (InterruptedException ie) { logger.log(Level.SEVERE, "I got InterruptedException when I was chilling after all my moves.", ie); }
 		ta.keepExploring = false;
-		ta.tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
+		ta.tiThread.join(1000*numPlayers + maxmoves*200); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
 		logger.info("Shutting down Paxos");
 		paxos.shutdownPaxos(); // shutdown paxos.
 		ta.tiThread.interrupt(); // interrupt the app thread if it has not terminated.
