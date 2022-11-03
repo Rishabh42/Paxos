@@ -24,7 +24,7 @@ public class Paxos
 	private static final int THREAD_SLEEP_MAX_MILLIS = 50;
 	private static final int THREAD_SLEEP_MIN_MILLIS = 100;
 	private static final long THREAD_POLLING_LOOP_SLEEP = 50;
-	private static final long THREAD_TERMINATION_SLEEP = 1800;
+	private static final long THREAD_TERMINATION_SLEEP = 1500;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -35,7 +35,6 @@ public class Paxos
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
 	
 	private boolean shouldContinue = true;
-	private boolean applicationInTerminationProcess = false;
 
 	private Semaphore lock;
 	private Random rand;
@@ -192,15 +191,13 @@ public class Paxos
 			}
 
 			currentHighestBallotID = proposerBallotID;
-			if (!applicationInTerminationProcess)
-				gcl.sendMsg(acceptMsg, senderProcess);
+			gcl.sendMsg(acceptMsg, senderProcess);
 		}
 		else
 		{
 			logger.fine("Denying player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". current highest ballotID: " + currentHighestBallotID);
 			Object[] denyMsg = new Object[] { PAXOS_PHASE_PROMISE_DENY, myProcess, currentHighestBallotID };
-			if (!applicationInTerminationProcess)
-				gcl.sendMsg(denyMsg, senderProcess);
+			gcl.sendMsg(denyMsg, senderProcess);
 		}
 
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
@@ -286,8 +283,7 @@ public class Paxos
 		{
 			msg = new Object[] { PAXOS_PHASE_PROPOSE_VALUE_DENYACK, ballotID };	
 		}
-		if (!applicationInTerminationProcess)
-			gcl.sendMsg(msg, senderProcess);
+		gcl.sendMsg(msg, senderProcess);
 	}
 
 	synchronized private void handleProposeValueAcceptAckMessage(String senderProcess)
@@ -318,7 +314,6 @@ public class Paxos
 		Map.Entry message = messagesTreeMap.firstEntry();
 		Object[] returnObj = null;
 		
-		int retryAttempts = 0;
 		while (message == null || (int)message.getKey() > processMessageCount || !shouldContinue)
 		{
 			try 
@@ -367,8 +362,7 @@ public class Paxos
 		
 		logger.fine("Player: " + processID + " proposing to be a leader with ballotID: " + currentProposerBallotID);
 		Object[] obj = new Object[] { PAXOS_PHASE_PROPOSE_LEADER, processID, currentProposerBallotID };
-		if (!applicationInTerminationProcess)
-			gcl.broadcastMsg(obj);
+		gcl.broadcastMsg(obj);
 
 		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 
@@ -411,8 +405,7 @@ public class Paxos
 			obj = new Object[] { PAXOS_PHASE_PROPOSE_VALUE, currentProposerBallotID, val };
 		}
 
-		if (!applicationInTerminationProcess)
-			gcl.broadcastMsg(obj);
+		gcl.broadcastMsg(obj);
 
 		TriStateResponse response = hasMajority(false);
 		int loopCount = 0;
@@ -448,8 +441,7 @@ public class Paxos
 				confirmFailed = false;
 			}
 			Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, globalMessageCount, val };
-			if (!applicationInTerminationProcess)
-				gcl.broadcastMsg(obj);
+			gcl.broadcastMsg(obj);
 			
 			lock.release();
 		}

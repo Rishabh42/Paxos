@@ -22,11 +22,11 @@ export process4=${autotesthost}:404$group
 export process5=${autotesthost}:405$group
 export process6=${autotesthost}:406$group
 export process7=${autotesthost}:407$group
-export process8=${autotesthost}:408$group
-export process9=${autotesthost}:409$group
+#export process8=${autotesthost}:408$group
+#export process9=${autotesthost}:409$group
 
 #TODO update these values as needed
-maxmoves=100 interval=100 randseed=xxxxxxxxx
+maxmoves=150 interval=100 randseed=xxxxxxxxx
 #TODO IF (and only if) you want to simulate failures, enable this for corresponding player numbers.
 #export failmode_N=RECEIVEPROPOSE
 #export failmode_N=AFTERSENDVOTE
