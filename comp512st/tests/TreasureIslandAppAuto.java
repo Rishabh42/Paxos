@@ -288,9 +288,9 @@ public class TreasureIslandAppAuto implements Runnable
 
 		logger.info("Done with all my moves ..."); // we just chill for a bit to ensure we got all the messages from others before we shutdown.
 																							// May have to increase this for higher maxmoves and smaller intervals.
-		try{ Thread.sleep(8000); } catch (InterruptedException ie) { logger.log(Level.SEVERE, "I got InterruptedException when I was chilling after all my moves.", ie); }
+		try{ Thread.sleep(5000); } catch (InterruptedException ie) { logger.log(Level.SEVERE, "I got InterruptedException when I was chilling after all my moves.", ie); }
 		ta.keepExploring = false;
-		ta.tiThread.join(1000*numPlayers + maxmoves*200); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
+		ta.tiThread.join(1500 * numPlayers); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
 		logger.info("Shutting down Paxos");
 		paxos.shutdownPaxos(); // shutdown paxos.
 		ta.tiThread.interrupt(); // interrupt the app thread if it has not terminated.
