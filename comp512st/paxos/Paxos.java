@@ -22,7 +22,7 @@ public class Paxos
 	* Static helper variables
 	*/
 	private static final int THREAD_SLEEP_MAX_MILLIS = 50;
-	private static final int THREAD_SLEEP_MIN_MILLIS = 70;
+	private static final int THREAD_SLEEP_MIN_MILLIS = 100;
 	private static final long THREAD_POLLING_LOOP_SLEEP = 50;
 	private static final long THREAD_TERMINATION_SLEEP = 1800;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
@@ -167,7 +167,7 @@ public class Paxos
 				if (!confirmFailed)
 					mustRestartPaxosProcess = false;
 			}
-			Thread.sleep(10);
+			Thread.sleep(20);
 		}
 		catch (InterruptedException e){}
 	}
@@ -252,17 +252,21 @@ public class Paxos
 	{
 		Object[] obj = (Object[]) message;
 		logger.fine("Adding message to tree map: " + "{ proposerMessageCount: " + proposerMessageCount + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
-		if (messagesTreeMap.get(proposerMessageCount) != null)
-		{
-			//TODO: means we have a collision
-		}
-
-		messagesTreeMap.put(proposerMessageCount, message);
 
 		try
 		{
 			lock.acquire();
-			globalMessageCount = ++proposerMessageCount;
+			if (messagesTreeMap.get(proposerMessageCount) == null)
+			{
+				messagesTreeMap.put(proposerMessageCount, message);
+				globalMessageCount = ++proposerMessageCount;
+			}
+			else
+			{
+				int lastMessageKey = messagesTreeMap.lastKey() + 1;
+				messagesTreeMap.put(lastMessageKey, message);
+				globalMessageCount = lastMessageKey ++;
+			}
 			lock.release();
 		}
 		catch (Exception e){}
@@ -436,6 +440,7 @@ public class Paxos
 			if (messagesTreeMap.get(globalMessageCount) != null)
 			{
 				confirmFailed = true;
+				lock.release();
 				return;
 			}
 			else
