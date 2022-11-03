@@ -189,11 +189,13 @@ public class Paxos
 			{
 				logger.fine("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID);
 				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT, proposerPlayerID, proposerBallotID };
+				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			}
 			else 
 			{
 				logger.fine("Accepting player: " + proposerPlayerID + " to be the leader with ballotID: " + proposerBallotID + ". However, previous value was accepted: " + acceptedValue);
 				acceptMsg = new Object[] { PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE, proposerPlayerID, currentHighestBallotID,  acceptedValue };
+				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			}
 
 			currentHighestBallotID = proposerBallotID;
@@ -207,8 +209,6 @@ public class Paxos
 			if (!applicationInTerminationProcess)
 				gcl.sendMsg(denyMsg, senderProcess);
 		}
-
-		failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 	}
 
 	synchronized private void handlePromiseAcceptMessage(String senderProcess)
