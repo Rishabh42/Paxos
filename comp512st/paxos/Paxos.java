@@ -21,10 +21,10 @@ public class Paxos
 	/*
 	* Static helper variables
 	*/
-	private static final int THREAD_SLEEP_MAX_MILLIS = 80;
-	private static final int THREAD_SLEEP_MIN_MILLIS = 50;
+	private static final int THREAD_SLEEP_MAX_MILLIS = 50;
+	private static final int THREAD_SLEEP_MIN_MILLIS = 100;
 	private static final long THREAD_POLLING_LOOP_SLEEP = 50;
-	private static final long THREAD_TERMINATION_SLEEP = 1500;
+	private static final long THREAD_TERMINATION_SLEEP = 1800;
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
@@ -33,10 +33,6 @@ public class Paxos
 	private static final String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_DENYACK = "denyack";
-	private static final String PAXOS_PHASE_PROCESS_SHUTDOWN = "processshutdown";
-	private static final String PAXOS_PHASE_APPLICATION_SHUTDOWN = "applicationshutdown";
-	private static final String TERMINATION_MESSAGE = "termination";
-	private static final String APPLICATION_TERMINATION_MESSAGE = "apptermination";
 	
 	private boolean shouldContinue = true;
 	private boolean applicationInTerminationProcess = false;
@@ -171,7 +167,7 @@ public class Paxos
 				if (!confirmFailed)
 					mustRestartPaxosProcess = false;
 			}
-			Thread.sleep(10);
+			Thread.sleep(20);
 		}
 		catch (InterruptedException e){}
 	}
@@ -257,17 +253,21 @@ public class Paxos
 	{
 		Object[] obj = (Object[]) message;
 		logger.fine("Adding message to tree map: " + "{ proposerMessageCount: " + proposerMessageCount + ", " + "{ " + obj[0] + ", " + obj[1] + " } }"); 
-		if (messagesTreeMap.get(proposerMessageCount) != null)
-		{
-			//TODO: means we have a collision
-		}
-
-		messagesTreeMap.put(proposerMessageCount, message);
 
 		try
 		{
 			lock.acquire();
-			globalMessageCount = ++proposerMessageCount;
+			if (messagesTreeMap.get(proposerMessageCount) == null)
+			{
+				messagesTreeMap.put(proposerMessageCount, message);
+				globalMessageCount = ++proposerMessageCount;
+			}
+			else
+			{
+				int lastMessageKey = messagesTreeMap.lastKey() + 1;
+				messagesTreeMap.put(lastMessageKey, message);
+				globalMessageCount = lastMessageKey ++;
+			}
 			lock.release();
 		}
 		catch (Exception e){}
@@ -312,19 +312,6 @@ public class Paxos
 		catch (Exception e){}
 	}
 
-	synchronized private void handleProcessShutdown(String process)
-	{
-		logger.fine("Adding message to tree map: PROCESS TERMINATION");
-		applicationInTerminationProcess = true; 
-		upProcesses --;
-		if (process.equals(myProcess) && upProcesses == 0)
-		{
-			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { "termination" });
-		}
-		if (upProcesses == 0)
-			messagesTreeMap.put(Integer.MAX_VALUE, new Object[] { APPLICATION_TERMINATION_MESSAGE });
-	}
-
 	// This is what the application layer is calling to figure out what is the next message in the total order.
 	// Messages delivered in ALL the processes in the group should deliver this in the same order.
 	public Object acceptTOMsg() throws InterruptedException
@@ -333,17 +320,8 @@ public class Paxos
 		Object[] returnObj = null;
 		
 		int retryAttempts = 0;
-		while (message == null || (int)message.getKey() > processMessageCount)
+		while (message == null || (int)message.getKey() > processMessageCount || !shouldContinue)
 		{
-			if (message != null && (int)message.getKey() == Integer.MAX_VALUE)
-				break;
-				
-			if (applicationInTerminationProcess)
-				retryAttempts++;
-
-			if (retryAttempts == 50 * processCount)
-				return new Object[] { APPLICATION_TERMINATION_MESSAGE };
-
 			try 
 			{
 				Thread.sleep(THREAD_POLLING_LOOP_SLEEP);
@@ -375,13 +353,10 @@ public class Paxos
 	// Add any of your own shutdown code into this method.
 	public void shutdownPaxos()
 	{
-		Object[] obj = new Object[] { PAXOS_PHASE_APPLICATION_SHUTDOWN, myProcess };
-		gcl.broadcastMsg(obj);
 		try
 		{
 			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount);
 			shouldContinue = false;
-			Thread.sleep(1000);
 		}
 		catch (InterruptedException e) {}
 		gcl.shutdownGCL();
@@ -403,7 +378,7 @@ public class Paxos
 		int loopCount = 0;
 		while (response == TriStateResponse.NORESPONSE)
 		{	
-			if (loopCount == 25)
+			if (loopCount == 20)
 				return false;
 			logger.fine("Process: " + processID + " inside no response loop to be leader.");
 			 try
@@ -467,6 +442,7 @@ public class Paxos
 			if (messagesTreeMap.get(globalMessageCount) != null)
 			{
 				confirmFailed = true;
+				lock.release();
 				return;
 			}
 			else
@@ -576,11 +552,6 @@ public class Paxos
 					{
 						logger.fine("Recevived confirm value from process: " + gcmsg.senderProcess);
 						handleConfirmValue((int)obj[1], obj[2]);
-					}
-					else if (obj[0].equals(PAXOS_PHASE_APPLICATION_SHUTDOWN))
-					{
-						logger.fine("Received shutdown from process: " + gcmsg.senderProcess);
-						handleProcessShutdown((String)obj[1]);
 					}
 				}
 				catch (InterruptedException ie) 
