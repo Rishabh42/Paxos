@@ -337,7 +337,7 @@ public class Paxos
 		while (message == null || (int)message.getKey() > processMessageCount)
 		{
 			if(!shouldContinue){
-				return null;
+				break;
 			}
 
 			try 
@@ -387,9 +387,9 @@ public class Paxos
 				logger.fine("----- Average move time ------ " + totalMovesTime / currentAcceptedMoveNumber);
 		}
 		catch (InterruptedException e) {
-			shouldContinue = false;
-			gcl.shutdownGCL();
-			return;
+			// shouldContinue = false;
+			// gcl.shutdownGCL();
+			// return;
 		}
 		shouldContinue = false;
 		gcl.shutdownGCL();
