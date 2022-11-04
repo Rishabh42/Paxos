@@ -28,7 +28,7 @@ public class Paxos
 	private static final String PAXOS_PHASE_PROPOSE_LEADER = "proposeleader";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE = "proposevalue";
 	private static final String PAXOS_PHASE_PROMISE_ACCEPT = "promiseaccept";
-	private static final String PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE = "promiseaccept";
+	private static final String PAXOS_PHASE_PROMISE_ACCEPT_WITH_PREVIOUS_VALUE = "promiseacceptwithprevvalue";
 	private static final String PAXOS_PHASE_PROMISE_DENY = "promisedeny";
 	private static final String PAXOS_PHASE_CONFIRM_VALUE = "confirmvalue";
 	private static final String PAXOS_PHASE_PROPOSE_VALUE_ACCEPTACK = "acceptack";
