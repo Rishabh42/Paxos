@@ -386,7 +386,11 @@ public class Paxos
 			if (currentAcceptedMoveNumber != 0)
 				logger.fine("----- Average move time ------ " + totalMovesTime / currentAcceptedMoveNumber);
 		}
-		catch (InterruptedException e) {}
+		catch (InterruptedException e) {
+			shouldContinue = false;
+			gcl.shutdownGCL();
+			return;
+		}
 		shouldContinue = false;
 		gcl.shutdownGCL();
 	}

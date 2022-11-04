@@ -74,6 +74,7 @@ public class TreasureIslandApp implements Runnable
 			catch(InterruptedException ie)
 			{
 			}
+			System.exit(0);
 	}
 
 	public void displayIsland()
