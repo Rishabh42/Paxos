@@ -40,7 +40,7 @@ public class TreasureIslandApp implements Runnable
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
 				if (info == null) {
-					continue;
+					break;
 				}
 				logger.fine("Received :" + Arrays.toString(info));
 				move((Integer)info[0], (Character)info[1]);

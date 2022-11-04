@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #TODO set this to where your code and jar file root dir is
-BASEDIR=$HOME/COMP512-paxos
+BASEDIR=$HOME/COMP512/PA2/COMP512-paxos
 
 #TODO update your group number here inpace of XX
 group=40

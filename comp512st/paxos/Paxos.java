@@ -68,7 +68,7 @@ public class Paxos
 	private long totalMovesTime = 0;
 	private Dictionary<Integer, Long> playerTimes;
 
-	private boolean confirmFailed = true;
+	private boolean mustRedo = true;
 	/*
 	* Private variables meant for the acceptors
 	*/
@@ -170,7 +170,7 @@ public class Paxos
 				if (lastAcceptedValue != null)
 				{
 					playerTimes.put(currentProcessMoveNumber,currentMoveStartTime);
-					confirmValue(currentProposerBallotID, lastAcceptedValue);
+					confirmValue(currentProposerBallotID, lastAcceptedValue, true);
 					lastAcceptedValue = null;
 					lastAcceptedBallotID = -1.0;
 				}
@@ -178,10 +178,10 @@ public class Paxos
 				{
 					playerTimes.put(currentProcessMoveNumber,currentMoveStartTime);
 					currentProcessMoveNumber++;
-					confirmValue(currentProposerBallotID, val);
+					confirmValue(currentProposerBallotID, val, false);
 					
 				}
-				if (!confirmFailed)
+				if (!mustRedo)
 					{
 						mustRestartPaxosProcess = false;
 					}
@@ -239,7 +239,7 @@ public class Paxos
 
 	synchronized private void handlePromiseAcceptWithPreviousValue(String senderProcess, Object previousValueBallotID, Object previousValue)
 	{
-		if ((lastAcceptedBallotID >= 0 && lastAcceptedBallotID < (double)previousValueBallotID) || lastAcceptedValue == null)
+		if (((lastAcceptedBallotID >= 0 && lastAcceptedBallotID < (double)previousValueBallotID)) || lastAcceptedValue == null)
 		{
 			lastAcceptedBallotID = (double)previousValueBallotID;
 			lastAcceptedValue = previousValue;
@@ -337,8 +337,9 @@ public class Paxos
 		while (message == null || (int)message.getKey() > processMessageCount)
 		{
 			if(!shouldContinue){
-				break;
+				return null;
 			}
+
 			try 
 			{
 				Thread.sleep(THREAD_POLLING_LOOP_SLEEP);
@@ -382,10 +383,11 @@ public class Paxos
 		try
 		{
 			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount);
-			logger.fine("----- Average move time ------ " + totalMovesTime / currentAcceptedMoveNumber);
-			shouldContinue = false;
+			if (currentAcceptedMoveNumber != 0)
+				logger.fine("----- Average move time ------ " + totalMovesTime / currentAcceptedMoveNumber);
 		}
 		catch (InterruptedException e) {}
+		shouldContinue = false;
 		gcl.shutdownGCL();
 	}
 
@@ -458,20 +460,20 @@ public class Paxos
 		return response;
 	}
 
-	private void confirmValue(double ballotID, Object val)
+	private void confirmValue(double ballotID, Object val, boolean prevValue)
 	{
 		try
 		{
 			lock.acquire();
 			if (messagesTreeMap.get(globalMessageCount) != null)
 			{
-				confirmFailed = true;
+				mustRedo = true;
 				lock.release();
 				return;
 			}
 			else
 			{
-				confirmFailed = false;
+				mustRedo = prevValue;
 			}
 			Object[] obj = new Object[] { PAXOS_PHASE_CONFIRM_VALUE, globalMessageCount, val };
 			gcl.broadcastMsg(obj);
