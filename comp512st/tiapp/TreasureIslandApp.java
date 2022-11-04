@@ -39,32 +39,13 @@ public class TreasureIslandApp implements Runnable
 			try
 			{
 				Object[] info  = (Object[]) paxos.acceptTOMsg();
-				if (info[0] instanceof String)
-				{
-					String termination = (String)info[0];
-					if (termination.equals("termination"))
-					{
-						return;
-					}
-					else if (termination.equals("apptermination"))
-					{
-						logger.info("Shutting down Paxos");
-						keepExploring = false;
-						tiThread.join(1000); // Wait maximum 1s for the app to process any more incomming messages that was in the queue.
-						paxos.shutdownPaxos();
-						tiThread.interrupt(); // interrupt the app thread if it has not terminated.
-						displayIsland(); // display the final map
-						logger.info("Process terminated.");
-						System.exit(0);
-						return;
-					}
+				if (info == null) {
+					continue;
 				}
-				else 
-				{
-					logger.fine("Received :" + Arrays.toString(info));
-					move((Integer)info[0], (Character)info[1]);
-					displayIsland();
-				}
+				logger.fine("Received :" + Arrays.toString(info));
+				move((Integer)info[0], (Character)info[1]);
+				displayIsland();
+				
 			}
 			catch(InterruptedException ie)
 			{
@@ -72,7 +53,8 @@ public class TreasureIslandApp implements Runnable
 					logger.log(Level.SEVERE, "Encountered InterruptedException while waiting for messages.", ie);
 				break;
 			}
-			//Take care of remaining messages.
+		}
+		//Take care of remaining messages.
 			try
 			{
 				Object[] obj = (Object[]) paxos.acceptTOMsg();
@@ -92,7 +74,6 @@ public class TreasureIslandApp implements Runnable
 			catch(InterruptedException ie)
 			{
 			}
-		}
 	}
 
 	public void displayIsland()

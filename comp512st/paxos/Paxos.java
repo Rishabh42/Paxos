@@ -11,7 +11,8 @@ import java.util.*;
 import java.util.Queue;
 import java.util.concurrent.*;
 import java.io.*;	
-import java.util.logging.*;	
+import java.util.logging.*;
+import java.time.*;
 
 public class Paxos
 {
@@ -59,6 +60,13 @@ public class Paxos
 	private Dictionary<String, TriStateResponse> valuePromises;
 	private Integer globalMessageCount = 0;
 	private int processMessageCount = 0;
+	private int currentProcessMoveNumber = 0;
+	private int currentAcceptedMoveNumber = 0;
+	private int playerNumber = -1;
+	private Clock clk = Clock.systemDefaultZone();
+	private long currentMoveStartTime;
+	private long totalMovesTime = 0;
+	private Dictionary<Integer, Long> playerTimes;
 
 	private boolean confirmFailed = true;
 	/*
@@ -88,6 +96,8 @@ public class Paxos
 		resetLeaderPromises();
 		resetValuePromises();
 
+		playerTimes = new Hashtable<Integer, Long>();
+
 		paxosThread = new Thread(new PaxosThread());
 		paxosThread.start();
 	}
@@ -113,14 +123,19 @@ public class Paxos
 	// This is what the application layer is going to call to send a message/value, such as the player and the move
 	public void broadcastTOMsg(Object val)
 	{
+		Object[] obj = (Object[])val;
+		if (playerNumber == -1){
+			playerNumber = (int)obj[0];
+		}
 		try
 		{
-			Thread.sleep((long)(THREAD_SLEEP_MIN_MILLIS + rand.nextInt(THREAD_SLEEP_MAX_MILLIS)));
-			Object[] obj = (Object[])val;
-			logger.fine("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
 			boolean mustRestartPaxosProcess = true;
 			while(mustRestartPaxosProcess)
 			{
+				currentMoveStartTime = clk.millis();
+				Thread.sleep((long)(THREAD_SLEEP_MIN_MILLIS + rand.nextInt(THREAD_SLEEP_MAX_MILLIS)));
+				logger.fine("Player: " + obj[0] + " is attempting to enter a paxos round with value " + obj[1]);
+			
 				boolean mustRestartProposePhases = true;
 				while(mustRestartProposePhases)
 				{
@@ -154,17 +169,22 @@ public class Paxos
 				//Third step confirm value
 				if (lastAcceptedValue != null)
 				{
+					playerTimes.put(currentProcessMoveNumber,currentMoveStartTime);
 					confirmValue(currentProposerBallotID, lastAcceptedValue);
 					lastAcceptedValue = null;
 					lastAcceptedBallotID = -1.0;
 				}
 				else
 				{
+					playerTimes.put(currentProcessMoveNumber,currentMoveStartTime);
+					currentProcessMoveNumber++;
 					confirmValue(currentProposerBallotID, val);
 					
 				}
 				if (!confirmFailed)
-					mustRestartPaxosProcess = false;
+					{
+						mustRestartPaxosProcess = false;
+					}
 			}
 			Thread.sleep(20);
 		}
@@ -314,8 +334,11 @@ public class Paxos
 		Map.Entry message = messagesTreeMap.firstEntry();
 		Object[] returnObj = null;
 		
-		while (message == null || (int)message.getKey() > processMessageCount || !shouldContinue)
+		while (message == null || (int)message.getKey() > processMessageCount)
 		{
+			if(!shouldContinue){
+				break;
+			}
 			try 
 			{
 				Thread.sleep(THREAD_POLLING_LOOP_SLEEP);
@@ -339,8 +362,17 @@ public class Paxos
 			}
 		}
 
+		if (message == null) {
+			return null;
+		}
 		if (!((int)message.getKey() == Integer.MAX_VALUE))
 			processMessageCount++;
+		
+		if ((int)((Object[])message.getValue())[0] == playerNumber) {
+			totalMovesTime += clk.millis() - playerTimes.get(currentAcceptedMoveNumber);
+			currentAcceptedMoveNumber++;
+		}
+
 		return returnObj;
 	}
 
@@ -350,6 +382,7 @@ public class Paxos
 		try
 		{
 			paxosThread.join(THREAD_TERMINATION_SLEEP * processCount);
+			logger.fine("----- Average move time ------ " + totalMovesTime / currentAcceptedMoveNumber);
 			shouldContinue = false;
 		}
 		catch (InterruptedException e) {}
